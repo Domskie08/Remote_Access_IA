@@ -1,66 +1,64 @@
 #!/usr/bin/env python3
 import subprocess
-import time
-import psutil
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 CAM_DEVICE = "/dev/video0"
 HTTP_PORT = 8080
+RESOLUTION = "640x480"
+FPS = "15"
 
-RESOLUTIONS = {
-    "1080p": ("1920x1080", "3M"),
-    "720p": ("1280x720", "1.5M"),
-    "480p": ("640x480", "800k"),
-}
-
-THRESHOLDS = [
-    ("1080p", 25),  # ≤25 users
-    ("720p", 30),  # 26–30 users
-    ("480p", 40),  # 31–40 users
-]
-
-current_proc = None
-current_res = None
-
-def count_viewers():
-    count = 0
-    for conn in psutil.net_connections(kind="tcp"):
-        if conn.laddr.port == HTTP_PORT and conn.status == "ESTABLISHED":
-            count += 1
-    return count
-
-def start_stream(res, bitrate):
-    global current_proc
-    if current_proc:
-        current_proc.kill()
-
-    print(f"[INFO] Starting camera at {res}, bitrate {bitrate}")
+# Start FFmpeg process (produces MJPEG to stdout)
+def start_ffmpeg():
     cmd = [
         "ffmpeg",
-        "-f", "v4l2", "-framerate", "25", "-video_size", res, "-i", CAM_DEVICE,
-        "-vcodec", "h264_v4l2m2m", "-b:v", bitrate,
-        "-f", "mpegts", f"tcp://0.0.0.0:{HTTP_PORT}?listen=1"
+        "-f", "v4l2",
+        "-framerate", FPS,
+        "-video_size", RESOLUTION,
+        "-i", CAM_DEVICE,
+        "-vf", "format=yuv420p",
+        "-q:v", "5",  # quality (1 = best, 31 = worst)
+        "-f", "mjpeg",
+        "pipe:1",
     ]
-    current_proc = subprocess.Popen(cmd)
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
-def choose_resolution(viewers):
-    for res, limit in THRESHOLDS:
-        if viewers <= limit:
-            return res
-    return "480p"
+# HTTP handler serving MJPEG
+class StreamHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/camera":
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"404 Not Found")
+            return
 
-def main():
-    global current_res
-    while True:
-        viewers = count_viewers()
-        target_res = choose_resolution(viewers)
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.end_headers()
 
-        if target_res != current_res:
-            res, bitrate = RESOLUTIONS[target_res]
-            start_stream(res, bitrate)
-            current_res = target_res
+        print(f"[INFO] Client connected: {self.client_address}")
+        try:
+            while True:
+                # Read frame from ffmpeg stdout
+                data = ffmpeg_proc.stdout.readline()
+                if not data:
+                    break
+                self.wfile.write(b"--frame\r\n")
+                self.wfile.write(b"Content-Type: image/jpeg\r\n\r\n")
+                self.wfile.write(data)
+                self.wfile.write(b"\r\n")
+        except Exception:
+            print(f"[INFO] Client disconnected: {self.client_address}")
 
-        print(f"[INFO] Viewers={viewers}, Resolution={current_res}")
-        time.sleep(10)
+def run_server():
+    server = HTTPServer(("0.0.0.0", HTTP_PORT), StreamHandler)
+    print(f"[INFO] MJPEG stream running at http://10.186.3.133:{HTTP_PORT}/camera")
+    server.serve_forever()
 
 if __name__ == "__main__":
-    main()
+    ffmpeg_proc = start_ffmpeg()
+    try:
+        run_server()
+    except KeyboardInterrupt:
+        print("\n[INFO] Stopping stream...")
+        ffmpeg_proc.kill()
