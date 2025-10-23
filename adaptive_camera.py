@@ -4,9 +4,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 CAM_DEVICE = "/dev/video0"
 HTTP_PORT = 8080
-RESOLUTION = "640x480"
-FPS = "15"
-
+FPS = "30"
+RESOLUTIONS = {
+    "1080p": ("1920x1080", "8M"),
+    "720p": ("1280x720", "4M"),
+    "480p": ("640x480", "2M"),
+}
+CURRENT_MODE = "720p"
+RESOLUTION, BITRATE = RESOLUTIONS[CURRENT_MODE]
 def start_ffmpeg():
     cmd = [
         "ffmpeg",
@@ -15,8 +20,10 @@ def start_ffmpeg():
         "-framerate", FPS,
         "-video_size", RESOLUTION,
         "-i", CAM_DEVICE,
+        "-vf", f"scale={RESOLUTION}",
         "-f", "mjpeg",
         "pipe:1",
+        "-preset", "ultrafast", "-tune", "zerolatency"
     ]
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=10**8)
 
