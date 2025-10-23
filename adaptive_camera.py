@@ -16,8 +16,9 @@ def start_ffmpeg():
         "-framerate", FPS,
         "-video_size", RESOLUTION,
         "-i", CAM_DEVICE,
-        "-vf", "format=yuv420p",
-        "-q:v", "5",  # quality (1 = best, 31 = worst)
+        "-c:v", "mjpeg",        # ensure JPEG encoding
+        "-q:v", "5",            # quality 1-31
+        "-update", "1",
         "-f", "mjpeg",
         "pipe:1",
     ]
