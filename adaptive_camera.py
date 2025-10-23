@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import subprocess
-import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 CAM_DEVICE = "/dev/video0"
@@ -8,23 +7,19 @@ HTTP_PORT = 8080
 RESOLUTION = "640x480"
 FPS = "15"
 
-# Start FFmpeg process (produces MJPEG to stdout)
 def start_ffmpeg():
     cmd = [
         "ffmpeg",
         "-f", "v4l2",
+        "-input_format", "mjpeg",  # use mjpeg if available
         "-framerate", FPS,
         "-video_size", RESOLUTION,
         "-i", CAM_DEVICE,
-        "-c:v", "mjpeg",        # ensure JPEG encoding
-        "-q:v", "5",            # quality 1-31
-        "-update", "1",
         "-f", "mjpeg",
         "pipe:1",
     ]
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=10**8)
 
-# HTTP handler serving MJPEG
 class StreamHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path != "/camera":
@@ -39,15 +34,21 @@ class StreamHandler(BaseHTTPRequestHandler):
 
         print(f"[INFO] Client connected: {self.client_address}")
         try:
+            buffer = b""
             while True:
-                # Read frame from ffmpeg stdout
-                data = ffmpeg_proc.stdout.readline()
-                if not data:
+                chunk = ffmpeg_proc.stdout.read(4096)
+                if not chunk:
                     break
-                self.wfile.write(b"--frame\r\n")
-                self.wfile.write(b"Content-Type: image/jpeg\r\n\r\n")
-                self.wfile.write(data)
-                self.wfile.write(b"\r\n")
+                buffer += chunk
+                # Split by JPEG frame boundary (FF D9 = end of JPEG)
+                while b"\xff\xd9" in buffer:
+                    frame, buffer = buffer.split(b"\xff\xd9", 1)
+                    frame += b"\xff\xd9"
+                    self.wfile.write(b"--frame\r\n")
+                    self.wfile.write(b"Content-Type: image/jpeg\r\n\r\n")
+                    self.wfile.write(frame)
+                    self.wfile.write(b"\r\n")
+                    self.wfile.flush()
         except Exception:
             print(f"[INFO] Client disconnected: {self.client_address}")
 
