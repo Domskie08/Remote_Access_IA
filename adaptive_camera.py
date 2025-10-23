@@ -2,32 +2,27 @@
 import subprocess
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+# --- Configuration ---
 CAM_DEVICE = "/dev/video0"
 HTTP_PORT = 8080
-FPS = "30"
-RESOLUTIONS = {
-    "1080p": ("1920x1080", "8M"),
-    "720p": ("1280x720", "4M"),
-    "480p": ("640x480", "2M"),
-}
-CURRENT_MODE = "720p"
-RESOLUTION, BITRATE = RESOLUTIONS[CURRENT_MODE]
+RESOLUTION = "1280x720"  # 720p
+FPS = "30"               # smooth and stable
+
+# --- Start FFmpeg process (Direct MJPEG passthrough) ---
 def start_ffmpeg():
     cmd = [
         "ffmpeg",
         "-f", "v4l2",
-        "-input_format", "yuyv422",  # clearer color & detail
+        "-input_format", "mjpeg",      # use webcam’s native MJPEG output
         "-framerate", FPS,
         "-video_size", RESOLUTION,
         "-i", CAM_DEVICE,
-        "-vf", f"scale={RESOLUTION}:flags=lanczos",  # sharp upscale/downscale
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
         "-f", "mjpeg",
         "pipe:1"
     ]
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=10**8)
 
+# --- HTTP Stream Handler ---
 class StreamHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path != "/camera":
@@ -48,7 +43,8 @@ class StreamHandler(BaseHTTPRequestHandler):
                 if not chunk:
                     break
                 buffer += chunk
-                # Split by JPEG frame boundary (FF D9 = end of JPEG)
+
+                # Split JPEG frames by 0xFFD9 (end-of-frame marker)
                 while b"\xff\xd9" in buffer:
                     frame, buffer = buffer.split(b"\xff\xd9", 1)
                     frame += b"\xff\xd9"
@@ -60,11 +56,26 @@ class StreamHandler(BaseHTTPRequestHandler):
         except Exception:
             print(f"[INFO] Client disconnected: {self.client_address}")
 
+# --- Run HTTP Server ---
 def run_server():
     server = HTTPServer(("0.0.0.0", HTTP_PORT), StreamHandler)
-    print(f"[INFO] MJPEG stream running at http://10.186.3.133:{HTTP_PORT}/camera")
+    print(f"[INFO] MJPEG stream running at http://{get_local_ip()}:{HTTP_PORT}/camera")
     server.serve_forever()
 
+# --- Helper to get local IP ---
+import socket
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
+# --- Main entry point ---
 if __name__ == "__main__":
     ffmpeg_proc = start_ffmpeg()
     try:
