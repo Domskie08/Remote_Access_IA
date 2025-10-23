@@ -16,14 +16,15 @@ def start_ffmpeg():
     cmd = [
         "ffmpeg",
         "-f", "v4l2",
-        "-input_format", "mjpeg",  # use mjpeg if available
+        "-input_format", "yuyv422",  # clearer color & detail
         "-framerate", FPS,
         "-video_size", RESOLUTION,
         "-i", CAM_DEVICE,
-        "-vf", f"scale={RESOLUTION}:flags=lanczos",
+        "-vf", f"scale={RESOLUTION}:flags=lanczos",  # sharp upscale/downscale
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
         "-f", "mjpeg",
-        "pipe:1",
-        "-preset", "ultrafast", "-tune", "zerolatency"
+        "pipe:1"
     ]
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=10**8)
 
