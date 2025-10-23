@@ -20,10 +20,9 @@ def start_ffmpeg():
         "-framerate", FPS,
         "-video_size", RESOLUTION,
         "-i", CAM_DEVICE,
-        "-vf", f"scale={RESOLUTION}",
+        "-vf", f"scale={RESOLUTION}:flags=lanczos",
         "-f", "mjpeg",
         "pipe:1",
-        "-q:v", "2"
         "-preset", "ultrafast", "-tune", "zerolatency"
     ]
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=10**8)
