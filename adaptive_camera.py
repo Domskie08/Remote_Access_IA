@@ -23,6 +23,7 @@ def start_ffmpeg():
         "-vf", f"scale={RESOLUTION}",
         "-f", "mjpeg",
         "pipe:1",
+        "-q:v", "2"
         "-preset", "ultrafast", "-tune", "zerolatency"
     ]
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=10**8)
