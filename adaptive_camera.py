@@ -3,9 +3,9 @@ import cv2
 import asyncio
 from aiohttp import web
 from aiortc import RTCPeerConnection, VideoStreamTrack, RTCSessionDescription
-from aiortc.contrib.media import MediaBlackhole, MediaRecorder
+from av import VideoFrame
 
-# --- Webcam Track using OpenCV ---
+# --- Webcam Video Track ---
 class CameraVideoTrack(VideoStreamTrack):
     def __init__(self):
         super().__init__()
@@ -20,7 +20,6 @@ class CameraVideoTrack(VideoStreamTrack):
         if not ret:
             raise Exception("Camera read failed")
         # Convert BGR to RGB
-        from av import VideoFrame
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         vframe = VideoFrame.from_ndarray(frame, format="rgb24")
         vframe.pts = pts
@@ -46,13 +45,12 @@ async def offer(request):
     @pc.on("connectionstatechange")
     async def on_state_change():
         print("Connection state:", pc.connectionState)
-        if pc.connectionState == "failed" or pc.connectionState == "closed":
+        if pc.connectionState in ["failed", "closed"]:
             await pc.close()
             pcs.discard(pc)
 
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
-
     return web.json_response(
         {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
     )
@@ -62,7 +60,13 @@ async def on_shutdown(app):
     await asyncio.gather(*coros)
     pcs.clear()
 
+# --- App Setup ---
 app = web.Application()
 app.on_shutdown.append(on_shutdown)
 app.router.add_get("/", index)
 app.router.add_post("/offer", offer)
+
+# --- Run Server ---
+if __name__ == "__main__":
+    print("[INFO] Starting WebRTC server on port 8080...")
+    web.run_app(app, port=8080)
