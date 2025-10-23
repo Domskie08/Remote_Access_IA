@@ -1,74 +1,68 @@
 #!/usr/bin/env python3
-import subprocess
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import socket
+import cv2
+import asyncio
+from aiohttp import web
+from aiortc import RTCPeerConnection, VideoStreamTrack, RTCSessionDescription
+from aiortc.contrib.media import MediaBlackhole, MediaRecorder
 
-# --- Configuration ---
-CAM_DEVICE = "/dev/video0"
-HTTP_PORT = 8080
-RESOLUTION = "1280x720"
-FPS = "30"
-BITRATE = "4000k"  # 4 Mbps
+# --- Webcam Track using OpenCV ---
+class CameraVideoTrack(VideoStreamTrack):
+    def __init__(self):
+        super().__init__()
+        self.cap = cv2.VideoCapture(0)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
 
-# --- Start FFmpeg H.264 ---
-def start_ffmpeg():
-    cmd = [
-        "ffmpeg",
-        "-f", "v4l2",
-        "-input_format", "yuyv422",       # raw frames for best quality
-        "-video_size", RESOLUTION,
-        "-framerate", FPS,
-        "-i", CAM_DEVICE,
-        "-c:v", "h264_v4l2m2m",           # hardware H.264 encoder
-        "-b:v", BITRATE,
-        "-f", "mpegts",
-        "pipe:1"
-    ]
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=10**8)
+    async def recv(self):
+        pts, time_base = await self.next_timestamp()
+        ret, frame = self.cap.read()
+        if not ret:
+            raise Exception("Camera read failed")
+        # Convert BGR to RGB
+        from av import VideoFrame
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        vframe = VideoFrame.from_ndarray(frame, format="rgb24")
+        vframe.pts = pts
+        vframe.time_base = time_base
+        return vframe
 
-# --- HTTP Handler ---
-class StreamHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/camera":  # ✅ same URL
-            self.send_response(200)
-            self.send_header("Content-type", "video/mp4")
-            self.end_headers()
-            print(f"[INFO] Client connected: {self.client_address}")
-            try:
-                while True:
-                    data = ffmpeg_proc.stdout.read(4096)
-                    if not data:
-                        break
-                    self.wfile.write(data)
-            except Exception:
-                print(f"[INFO] Client disconnected: {self.client_address}")
-        else:
-            self.send_response(404)
-            self.end_headers()
+# --- Web Server ---
+pcs = set()
 
-# --- Helper to get local IP ---
-def get_local_ip():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-    except Exception:
-        ip = "127.0.0.1"
-    finally:
-        s.close()
-    return ip
+async def index(request):
+    content = open("index.html", "r").read()
+    return web.Response(content_type="text/html", text=content)
 
-# --- Run HTTP Server ---
-def run_server():
-    server = HTTPServer(("0.0.0.0", HTTP_PORT), StreamHandler)
-    print(f"[INFO] H.264 stream running at http://{get_local_ip()}:{HTTP_PORT}/camera")
-    server.serve_forever()
+async def offer(request):
+    params = await request.json()
+    offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
 
-# --- Main ---
-if __name__ == "__main__":
-    ffmpeg_proc = start_ffmpeg()
-    try:
-        run_server()
-    except KeyboardInterrupt:
-        print("\n[INFO] Stopping stream...")
-        ffmpeg_proc.kill()
+    pc = RTCPeerConnection()
+    pcs.add(pc)
+
+    pc.addTrack(CameraVideoTrack())
+
+    @pc.on("connectionstatechange")
+    async def on_state_change():
+        print("Connection state:", pc.connectionState)
+        if pc.connectionState == "failed" or pc.connectionState == "closed":
+            await pc.close()
+            pcs.discard(pc)
+
+    answer = await pc.createAnswer()
+    await pc.setLocalDescription(answer)
+
+    return web.json_response(
+        {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
+    )
+
+async def on_shutdown(app):
+    coros = [pc.close() for pc in pcs]
+    await asyncio.gather(*coros)
+    pcs.clear()
+
+app = web.Application()
+app.on_shutdown.append(on_shutdown)
+app.router.add_get("/", index)
+app.router.add_post("/offer", offer)
