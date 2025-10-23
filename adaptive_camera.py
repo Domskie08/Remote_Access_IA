@@ -37,7 +37,7 @@ def start_stream(res, bitrate):
     cmd = [
         "ffmpeg",
         "-f", "v4l2", "-framerate", "25", "-video_size", res, "-i", CAM_DEVICE,
-        "-vcodec", "h264_omx", "-b:v", bitrate,
+        "-vcodec", "h264_v4l2m2m", "-b:v", bitrate,
         "-f", "mpegts", f"http://0.0.0.0:{HTTP_PORT}/camera"
     ]
     current_proc = subprocess.Popen(cmd)
