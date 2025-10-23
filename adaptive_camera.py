@@ -18,6 +18,7 @@ def start_ffmpeg():
         "-video_size", RESOLUTION,
         "-i", CAM_DEVICE,
         "-f", "mjpeg",
+        "-b:v", "4M",                 
         "pipe:1"
     ]
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=10**8)
