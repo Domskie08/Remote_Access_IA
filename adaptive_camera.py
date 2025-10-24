@@ -2,7 +2,13 @@
 import cv2
 import asyncio
 from aiohttp import web
-from aiortc import RTCPeerConnection, VideoStreamTrack, RTCSessionDescription
+from aiortc import (
+    RTCPeerConnection,
+    RTCSessionDescription,
+    VideoStreamTrack,
+)
+from aiortc.contrib.media import MediaBlackhole, MediaRecorder
+from aiortc.rtcrtpsender import RTCRtpSender
 from av import VideoFrame
 
 # --- Webcam Video Track ---
@@ -19,7 +25,6 @@ class CameraVideoTrack(VideoStreamTrack):
         if self.cap is None:
             raise RuntimeError("❌ No available camera detected")
 
-        # Force supported capture format
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         self.cap.set(cv2.CAP_PROP_FPS, 30)
@@ -28,12 +33,11 @@ class CameraVideoTrack(VideoStreamTrack):
         pts, time_base = await self.next_timestamp()
         ret, frame = self.cap.read()
         if not ret:
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
             return await self.recv()
 
-        # Convert to YUV for WebRTC (better compatibility)
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
-        vframe = VideoFrame.from_ndarray(frame, format="yuv420p")
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        vframe = VideoFrame.from_ndarray(frame, format="rgb24")
         vframe.pts = pts
         vframe.time_base = time_base
         return vframe
@@ -43,8 +47,8 @@ class CameraVideoTrack(VideoStreamTrack):
 pcs = set()
 
 async def index(request):
-    content = open("index.html", "r").read()
-    return web.Response(content_type="text/html", text=content)
+    return web.FileResponse("index.html")
+
 
 async def offer(request):
     try:
@@ -54,16 +58,16 @@ async def offer(request):
         pc = RTCPeerConnection()
         pcs.add(pc)
 
-        # Attach camera
+        # Attach camera track
         video = CameraVideoTrack()
         pc.addTrack(video)
 
-        @pc.on("connectionstatechange")
-        async def on_state_change():
-            print(f"[INFO] Connection state: {pc.connectionState}")
-            if pc.connectionState in ["failed", "closed"]:
-                await pc.close()
-                pcs.discard(pc)
+        # Force VP8 codec (avoid "None is not in list" error)
+        for sender in pc.getSenders():
+            if sender.kind == "video":
+                sender.setCodecPreferences(
+                    [c for c in RTCRtpSender.getCapabilities("video").codecs if c.mimeType == "video/VP8"]
+                )
 
         await pc.setRemoteDescription(offer)
         answer = await pc.createAnswer()
@@ -91,7 +95,6 @@ app.on_shutdown.append(on_shutdown)
 app.router.add_get("/", index)
 app.router.add_post("/offer", offer)
 
-# --- Run Server ---
 if __name__ == "__main__":
     print("[INFO] Starting WebRTC server on port 8080...")
     web.run_app(app, port=8080)
