@@ -58,7 +58,6 @@ async def offer(request):
         pc = RTCPeerConnection()
         pcs.add(pc)
 
-        # Attach camera track
         video = CameraVideoTrack()
         pc.addTrack(video)
 
@@ -66,10 +65,11 @@ async def offer(request):
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
 
-        # --- Force VP8 codec manually in SDP ---
-        sdp = pc.localDescription.sdp
-        sdp = sdp.replace("H264", "VP8")
-        sdp = sdp.replace("h264", "vp8")
+        # --- Some aiortc builds fail when codecs aren't found, force fallback ---
+        sdp = pc.localDescription.sdp or ""
+        if "m=video" not in sdp:
+            print("[WARN] No video codecs found in SDP, forcing VP8 fallback")
+            sdp += "\na=rtpmap:96 VP8/90000\n"
 
         print("[INFO] ✅ Offer processed successfully")
         return web.json_response(
@@ -79,6 +79,7 @@ async def offer(request):
     except Exception as e:
         print("[ERROR] Offer handling failed:", e)
         return web.json_response({"error": str(e)}, status=500)
+
 
 
 async def on_shutdown(app):
