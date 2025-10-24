@@ -9,7 +9,17 @@ from av import VideoFrame
 class CameraVideoTrack(VideoStreamTrack):
     def __init__(self):
         super().__init__()
-        self.cap = cv2.VideoCapture(0)
+        self.cap = None
+        for device in [0, 1, 2]:
+            cap = cv2.VideoCapture(device)
+            if cap.isOpened():
+                self.cap = cap
+                print(f"[INFO] Camera opened at /dev/video{device}")
+                break
+        if self.cap is None:
+            raise RuntimeError("❌ No camera detected")
+
+        # Set camera parameters
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         self.cap.set(cv2.CAP_PROP_FPS, 30)
@@ -18,8 +28,9 @@ class CameraVideoTrack(VideoStreamTrack):
         pts, time_base = await self.next_timestamp()
         ret, frame = self.cap.read()
         if not ret:
-            raise Exception("Camera read failed")
-        # Convert BGR to RGB
+            print("[WARN] Frame capture failed")
+            await asyncio.sleep(0.05)
+            return await self.recv()
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         vframe = VideoFrame.from_ndarray(frame, format="rgb24")
         vframe.pts = pts
@@ -34,26 +45,33 @@ async def index(request):
     return web.Response(content_type="text/html", text=content)
 
 async def offer(request):
-    params = await request.json()
-    offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+    try:
+        params = await request.json()
+        offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
 
-    pc = RTCPeerConnection()
-    pcs.add(pc)
+        pc = RTCPeerConnection()
+        pcs.add(pc)
+        pc.addTrack(CameraVideoTrack())
 
-    pc.addTrack(CameraVideoTrack())
+        @pc.on("connectionstatechange")
+        async def on_state_change():
+            print("Connection state:", pc.connectionState)
+            if pc.connectionState in ["failed", "closed"]:
+                await pc.close()
+                pcs.discard(pc)
 
-    @pc.on("connectionstatechange")
-    async def on_state_change():
-        print("Connection state:", pc.connectionState)
-        if pc.connectionState in ["failed", "closed"]:
-            await pc.close()
-            pcs.discard(pc)
+        await pc.setRemoteDescription(offer)
+        answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
 
-    answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
-    return web.json_response(
-        {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
-    )
+        print("[OK] Offer processed successfully")
+        return web.json_response(
+            {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
+        )
+
+    except Exception as e:
+        print("[ERROR] Offer handling failed:", e)
+        return web.json_response({"error": str(e)}, status=500)
 
 async def on_shutdown(app):
     coros = [pc.close() for pc in pcs]
