@@ -1,34 +1,73 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Raspberry Pi Webcam WebRTC</title>
+  <meta charset="UTF-8" />
+  <title>Raspberry Pi WebRTC Stream</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #111;
+      color: #fff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      flex-direction: column;
+    }
+    video {
+      width: 80%;
+      max-width: 720px;
+      border: 3px solid #444;
+      border-radius: 10px;
+      background: #000;
+    }
+  </style>
 </head>
 <body>
-    <h2>Pi Webcam Stream (720p)</h2>
-    <video id="video" autoplay playsinline controls width="720"></video>
+  <h2>🎥 Raspberry Pi WebRTC Stream</h2>
+  <video id="video" autoplay playsinline></video>
 
-    <script>
-        const pc = new RTCPeerConnection();
-        const video = document.getElementById("video");
-        pc.ontrack = (event) => {
-            video.srcObject = event.streams[0];
-        };
+  <script>
+    async function start() {
+      const pc = new RTCPeerConnection();
+      const videoEl = document.getElementById("video");
 
-        async function start() {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
+      pc.ontrack = (event) => {
+        videoEl.srcObject = event.streams[0];
+      };
 
-            const response = await fetch("/offer", {
-                method: "POST",
-                body: JSON.stringify(pc.localDescription),
-                headers: {"Content-Type": "application/json"}
-            });
+      // Create data channel (optional)
+      pc.createDataChannel("test");
 
-            const answer = await response.json();
-            await pc.setRemoteDescription(answer);
-        }
+      // Create local offer
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
-        start();
-    </script>
+      // Send offer to the server
+      const response = await fetch("/offer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sdp: pc.localDescription.sdp,
+          type: pc.localDescription.type,
+        }),
+      });
+
+      const answer = await response.json();
+
+      if (!answer.sdp) {
+        console.error("Invalid answer from server:", answer);
+        return;
+      }
+
+      // Set remote description
+      await pc.setRemoteDescription(answer);
+      console.log("✅ Connected to camera stream!");
+    }
+
+    start().catch((err) => {
+      console.error("⚠️ Start error:", err);
+    });
+  </script>
 </body>
 </html>
