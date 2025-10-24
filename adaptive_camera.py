@@ -62,20 +62,18 @@ async def offer(request):
         video = CameraVideoTrack()
         pc.addTrack(video)
 
-        # Force VP8 codec (avoid "None is not in list" error)
-        for sender in pc.getSenders():
-            if sender.kind == "video":
-                sender.setCodecPreferences(
-                    [c for c in RTCRtpSender.getCapabilities("video").codecs if c.mimeType == "video/VP8"]
-                )
-
         await pc.setRemoteDescription(offer)
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
 
+        # --- Force VP8 codec manually in SDP ---
+        sdp = pc.localDescription.sdp
+        sdp = sdp.replace("H264", "VP8")
+        sdp = sdp.replace("h264", "vp8")
+
         print("[INFO] ✅ Offer processed successfully")
         return web.json_response(
-            {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
+            {"sdp": sdp, "type": pc.localDescription.type}
         )
 
     except Exception as e:
