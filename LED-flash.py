@@ -1,14 +1,20 @@
-#!/usr/bin/env python3
-"""
-Raspberry Pi 5: VL53L0X + LED + Camera Trigger (SvelteKit)
-Runs inside venv.
-"""
-
 import time
 import requests
 import urllib3
 import lgpio
 from VL53L0X import VL53L0X
+import subprocess  # <--- add this
+
+# ---------------- AUTORUN CHROME ----------------
+CHROME_URL = "https://172.27.44.17:4173/attendance-login"
+subprocess.Popen([
+    "chromium-browser",
+    "--kiosk",
+    "--disable-restore-session-state",
+    "--noerrdialogs",
+    "--incognito",
+    CHROME_URL
+])
 
 # ---------------- CONFIGURATION ----------------
 LED_PIN = 17
