@@ -5,7 +5,7 @@ from VL53L0X import VL53L0X  # from Gadgetoid library
 
 # Config
 LED_PIN = 18
-SERVER_URL = "http://YOUR_SERVER_IP:4173/api/camera"
+SERVER_URL = "https://172.27.44.17:4173/api/camera"
 THRESHOLD = 1000
 TIMEOUT = 10
 
