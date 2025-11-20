@@ -1,84 +1,60 @@
-# -------------------------------------------------------------------
-# VL53L0X Distance Detector + LED + Camera Trigger for Raspberry Pi 5
-# (NO Blinka, NO board, NO busio — fully Pi5 compatible)
-# -------------------------------------------------------------------
-
 import time
-import smbus2
-import RPi.GPIO as GPIO
+import lgpio
 import requests
+from vl53l0x import VL53L0X
 
-# ---------------- Configuration ----------------
-VL53_THRESHOLD = 1000       # 1000 mm = 1 meter
-LED_PIN = 18                # GPIO pin for LED flash
+# ------------ CONFIG ----------------
+VL53_THRESHOLD = 1000
+LED_PIN = 18
 SERVER_URL = "http://YOUR_SERVER_IP:4173/api/camera"
-SENSOR_POLL_DELAY = 0.1     # 100ms
-AUTO_STOP_DELAY = 10        # 10 seconds after no detection
-# ------------------------------------------------
+SENSOR_POLL_DELAY = 0.1
+AUTO_STOP_DELAY = 10
+# ------------------------------------
 
-# VL53L0X I2C address
-VL53_ADDR = 0x29
-bus = smbus2.SMBus(1)
+# GPIO setup
+chip = lgpio.gpiochip_open(0)
+lgpio.gpio_claim_output(chip, LED_PIN)
+lgpio.gpio_write(chip, LED_PIN, 0)
 
-# ------------- VL53L0X BASIC INITIALIZATION -------------
-def write_reg(reg, value):
-    bus.write_byte_data(VL53_ADDR, reg, value)
-
-def read_range_mm():
-    # Read distance registers (high + low bytes)
-    high = bus.read_byte_data(VL53_ADDR, 0x1E)
-    low = bus.read_byte_data(VL53_ADDR, 0x1F)
-    distance = (high << 8) + low
-    return distance
-# ----------------------------------------------------------
-
-# Setup GPIO LED
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(LED_PIN, GPIO.OUT)
-GPIO.output(LED_PIN, GPIO.LOW)
-
-def trigger_camera(action: str):
-    """Send POST to SvelteKit /api/camera endpoint."""
-    try:
-        requests.post(SERVER_URL, json={"action": action}, timeout=1)
-        print(f"📡 Camera action sent: {action}")
-    except Exception as e:
-        print(f"❌ Failed to send camera action: {e}")
-
-print("Starting VL53L0X distance monitoring...")
+# VL53L0X setup
+print("Initializing VL53L0X...")
+sensor = VL53L0X()
+print("VL53L0X ready!")
 
 last_seen = 0
 is_camera_on = False
 
+def trigger_camera(action):
+    try:
+        requests.post(SERVER_URL, json={"action": action}, timeout=1)
+        print(f"📡 Camera: {action}")
+    except Exception as e:
+        print(f"❌ Camera request failed: {e}")
+
+print("Starting monitoring loop...")
+
 try:
     while True:
-        try:
-            distance = read_range_mm()
+        distance = sensor.range
 
-            # Presence detected
-            if 0 < distance <= VL53_THRESHOLD:
-                last_seen = time.time()
-                if not is_camera_on:
-                    is_camera_on = True
-                    trigger_camera("start_camera")
-                    GPIO.output(LED_PIN, GPIO.HIGH)
-                    print(f"🎥 Camera started! Distance: {distance} mm")
+        if 0 < distance <= VL53_THRESHOLD:
+            last_seen = time.time()
+            if not is_camera_on:
+                is_camera_on = True
+                trigger_camera("start_camera")
+                lgpio.gpio_write(chip, LED_PIN, 1)
+                print(f"🎥 START — Distance: {distance}mm")
 
-            # Auto-stop camera
-            if is_camera_on and (time.time() - last_seen > AUTO_STOP_DELAY):
-                is_camera_on = False
-                trigger_camera("stop_camera")
-                GPIO.output(LED_PIN, GPIO.LOW)
-                print("🛑 Camera stopped (timeout)")
+        if is_camera_on and (time.time() - last_seen > AUTO_STOP_DELAY):
+            is_camera_on = False
+            trigger_camera("stop_camera")
+            lgpio.gpio_write(chip, LED_PIN, 0)
+            print("🛑 STOP — no presence")
 
-            print(f"Distance: {distance} mm | Camera ON: {is_camera_on}")
-            time.sleep(SENSOR_POLL_DELAY)
-
-        except OSError:
-            print("⚠ I2C read failed, retrying...")
-            time.sleep(0.2)
+        print(f"Distance: {distance}mm  | Camera: {is_camera_on}")
+        time.sleep(SENSOR_POLL_DELAY)
 
 except KeyboardInterrupt:
-    print("\nExiting...")
-    GPIO.output(LED_PIN, GPIO.LOW)
-    GPIO.cleanup()
+    print("Exiting...")
+    lgpio.gpio_write(chip, LED_PIN, 0)
+    lgpio.gpiochip_close(chip)
