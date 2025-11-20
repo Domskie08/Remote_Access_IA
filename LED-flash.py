@@ -1,7 +1,7 @@
 import time
 import lgpio
 import requests
-from vl53l0x_simple import VL53L0X
+from vl53l0x import VL53L0X
 
 # ---------------- CONFIG ----------------
 VL53_THRESHOLD = 1000       # mm
