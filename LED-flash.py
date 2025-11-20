@@ -1,50 +1,86 @@
+#!/usr/bin/env python3
+"""
+Raspberry Pi 5: VL53L0X + LED + Camera Trigger (SvelteKit)
+Runs inside venv.
+"""
+
 import time
-import lgpio
 import requests
-from VL53L0X import VL53L0X  # from Gadgetoid library
+import lgpio
+from VL53L0X import VL53L0X
 
-# Config
+# ---------------- CONFIGURATION ----------------
 LED_PIN = 18
-SERVER_URL = "https://172.27.44.17:4173/api/camera"
-THRESHOLD = 1000
-TIMEOUT = 10
+SERVER_URL = "https://172.27.44.17:4173/api/camera"  # <-- change this
+THRESHOLD = 1000       # mm; person detected if distance <= threshold
+AUTO_STOP_DELAY = 10    # seconds to turn off camera/LED after no detection
+SENSOR_POLL_DELAY = 0.1 # 100ms between distance reads
+# ------------------------------------------------
 
-# Setup LED
+# ---------------- GPIO SETUP --------------------
 chip = lgpio.gpiochip_open(0)
 lgpio.gpio_claim_output(chip, LED_PIN)
-lgpio.gpio_write(chip, LED_PIN, 0)
+lgpio.gpio_write(chip, LED_PIN, 0)  # LED off
+# ------------------------------------------------
 
-# Init sensor
+# ---------------- SENSOR SETUP ------------------
 sensor = VL53L0X()
-sensor.open()        # open / init sensor
-sensor.start_ranging()  # start measuring
+sensor.open()
+sensor.start_ranging()
+time.sleep(0.05)  # warm-up delay for first measurement
+# ------------------------------------------------
 
+# ---------------- STATE VARIABLES ----------------
 last_seen = 0
 camera_on = False
+# ------------------------------------------------
+
+print("Starting VL53L0X monitoring loop...")
 
 try:
     while True:
-        distance = sensor.get_distance()
+        try:
+            distance = sensor.get_distance()
+        except Exception as e:
+            print("⚠ Sensor read error:", e)
+            distance = 0
 
+        # Print distance every loop
+        if distance == 0:
+            print("Distance: out of range / not ready")
+        else:
+            print(f"Distance: {distance} mm")
+
+        # Person detected
         if 0 < distance <= THRESHOLD:
             last_seen = time.time()
             if not camera_on:
                 camera_on = True
-                requests.post(SERVER_URL, json={"action": "start_camera"})
-                lgpio.gpio_write(chip, LED_PIN, 1)
-                print("Camera started, distance:", distance)
+                try:
+                    requests.post(SERVER_URL, json={"action": "start_camera"}, timeout=1)
+                    print(f"🎥 Camera started! Distance: {distance} mm")
+                except Exception as e:
+                    print(f"❌ Camera start request failed: {e}")
+                lgpio.gpio_write(chip, LED_PIN, 1)  # LED on
 
-        if camera_on and (time.time() - last_seen > TIMEOUT):
+        # Auto-stop after timeout
+        if camera_on and (time.time() - last_seen > AUTO_STOP_DELAY):
             camera_on = False
-            requests.post(SERVER_URL, json={"action": "stop_camera"})
-            lgpio.gpio_write(chip, LED_PIN, 0)
-            print("Camera stopped due to timeout")
+            try:
+                requests.post(SERVER_URL, json={"action": "stop_camera"}, timeout=1)
+                print("🛑 Camera stopped (no presence)")
+            except Exception as e:
+                print(f"❌ Camera stop request failed: {e}")
+            lgpio.gpio_write(chip, LED_PIN, 0)  # LED off
 
-        print("Distance:", distance)
-        time.sleep(0.1)
+        time.sleep(SENSOR_POLL_DELAY)
 
 except KeyboardInterrupt:
+    print("\nExiting program...")
+finally:
+    # Cleanup
     sensor.stop_ranging()
     sensor.close()
     lgpio.gpio_write(chip, LED_PIN, 0)
     lgpio.gpiochip_close(chip)
+    print("Cleaned up GPIO and sensor")
