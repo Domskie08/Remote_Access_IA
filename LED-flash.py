@@ -12,6 +12,7 @@ from VL53L0X import VL53L0X
 # ---------------- CONFIGURATION ----------------
 LED_PIN = 18
 SERVER_URL = "https://172.27.44.17:4173/api/camera"  # <-- change this
+#curl -k -X POST https://172.27.44.17:4173/api/camera -H "Content-Type: application/json" -d '{"action": "start_camera"}'
 THRESHOLD = 1000       # mm; person detected if distance <= threshold
 AUTO_STOP_DELAY = 10    # seconds to turn off camera/LED after no detection
 SENSOR_POLL_DELAY = 0.1 # 100ms between distance reads
