@@ -18,7 +18,8 @@ lgpio.gpio_write(chip, LED_PIN, 0)
 
 # VL53L0X setup
 print("Initializing VL53L0X...")
-sensor = VL53L0X()
+sensor.start_ranging(VL53L0X.VL53L0X_BEST_ACCURACY_MODE)
+time.sleep(0.2)
 print("VL53L0X ready!")
 
 last_seen = 0
@@ -35,7 +36,7 @@ print("Starting monitoring loop...")
 
 try:
     while True:
-        distance = sensor.range
+        distance = sensor.get_distance()
 
         if 0 < distance <= VL53_THRESHOLD:
             last_seen = time.time()
