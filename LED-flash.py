@@ -6,14 +6,16 @@ Runs inside venv.
 
 import time
 import requests
+import urllib3
 import lgpio
 from VL53L0X import VL53L0X
 
 # ---------------- CONFIGURATION ----------------
-LED_PIN = 18
+LED_PIN = 17
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 SERVER_URL = "https://172.27.44.17:4173/api/camera"  # <-- change this
 #curl -k -X POST https://172.27.44.17:4173/api/camera -H "Content-Type: application/json" -d '{"action": "start_camera"}'
-THRESHOLD = 1000       # mm; person detected if distance <= threshold
+THRESHOLD = 400       # mm; person detected if distance <= threshold
 AUTO_STOP_DELAY = 10    # seconds to turn off camera/LED after no detection
 SENSOR_POLL_DELAY = 0.1 # 100ms between distance reads
 # ------------------------------------------------
@@ -58,7 +60,7 @@ try:
             if not camera_on:
                 camera_on = True
                 try:
-                    requests.post(SERVER_URL, json={"action": "start_camera"}, timeout=1)
+                    requests.post(SERVER_URL, json={"action": "start_camera"}, timeout=1,verify=False)
                     print(f"🎥 Camera started! Distance: {distance} mm")
                 except Exception as e:
                     print(f"❌ Camera start request failed: {e}")
@@ -68,7 +70,7 @@ try:
         if camera_on and (time.time() - last_seen > AUTO_STOP_DELAY):
             camera_on = False
             try:
-                requests.post(SERVER_URL, json={"action": "stop_camera"}, timeout=1)
+                requests.post(SERVER_URL, json={"action": "stop_camera"}, timeout=1,verify=False)
                 print("🛑 Camera stopped (no presence)")
             except Exception as e:
                 print(f"❌ Camera stop request failed: {e}")
