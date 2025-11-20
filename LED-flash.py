@@ -60,7 +60,7 @@ try:
             if not camera_on:
                 camera_on = True
                 try:
-                    requests.post(SERVER_URL, json={"action": "start_camera"}, timeout=1,verify=False)
+                    requests.post(SERVER_URL, json={"action": "start_camera"}, timeout=5,verify=False)
                     print(f"🎥 Camera started! Distance: {distance} mm")
                 except Exception as e:
                     print(f"❌ Camera start request failed: {e}")
@@ -70,7 +70,7 @@ try:
         if camera_on and (time.time() - last_seen > AUTO_STOP_DELAY):
             camera_on = False
             try:
-                requests.post(SERVER_URL, json={"action": "stop_camera"}, timeout=1,verify=False)
+                requests.post(SERVER_URL, json={"action": "stop_camera"}, timeout=5,verify=False)
                 print("🛑 Camera stopped (no presence)")
             except Exception as e:
                 print(f"❌ Camera stop request failed: {e}")
