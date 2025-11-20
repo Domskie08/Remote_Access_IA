@@ -1,79 +1,65 @@
 import time
-import lgpio
 import requests
-import VL53L0X
+import board
+import busio
+import adafruit_vl53l0x
+import RPi.GPIO as GPIO
 
-class VL53L0X:
-    def __init__(self, address=0x29, bus=1):
-        self.tof = VL53L0X.VL53L0X(i2c_bus=bus, i2c_address=address)
-        self.tof.start_ranging(VL53L0X.VL53L0X_BEST_ACCURACY_MODE)
+# ==== SETTINGS ====
+SERVER_URL = "http://DESKTOP-R98PM6A.local:4173/api/camera"  # ✅ FIXED: No /start_camera
+DISTANCE_THRESHOLD = 500  # mm
+NO_PERSON_TIMEOUT = 10    # seconds before stop
+LED_PIN = 17             # GPIO pin for LED
 
-    def read_range(self):
-        return self.tof.get_distance()
+# ==== INITIALIZE ====
+i2c = busio.I2C(board.SCL, board.SDA)
+vl53 = adafruit_vl53l0x.VL53L0X(i2c)
 
-    # Keep old methods for compatibility, but they do nothing
-    def _write(self, reg, value):
-        pass
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(LED_PIN, GPIO.OUT)
+GPIO.output(LED_PIN, GPIO.LOW)
 
-    def _read(self, reg):
-        return 0
+camera_started = False
+last_seen_time = 0
 
-    def _read16(self, reg):
-        return 0
-
-# ------------ CONFIG ----------------
-VL53_THRESHOLD = 1000
-LED_PIN = 18
-SERVER_URL = "http://YOUR_SERVER_IP:4173/api/camera"
-SENSOR_POLL_DELAY = 0.1
-AUTO_STOP_DELAY = 10
-# ------------------------------------
-
-# GPIO setup
-chip = lgpio.gpiochip_open(0)
-lgpio.gpio_claim_output(chip, LED_PIN)
-lgpio.gpio_write(chip, LED_PIN, 0)
-
-# VL53L0X setup
-print("Initializing VL53L0X...")
-sensor = VL53L0X()
-time.sleep(0.2)
-print("VL53L0X ready!")
-
-last_seen = 0
-is_camera_on = False
-
-def trigger_camera(action):
-    try:
-        requests.post(SERVER_URL, json={"action": action}, timeout=1)
-        print(f"📡 Camera: {action}")
-    except Exception as e:
-        print(f"❌ Camera request failed: {e}")
-
-print("Starting monitoring loop...")
+print("📏 VL53L0X distance sensor monitoring started...")
 
 try:
     while True:
-        distance = sensor.read_range()
+        distance = vl53.range  # distance in mm
+        now = time.time()
 
-        if 0 < distance <= VL53_THRESHOLD:
-            last_seen = time.time()
-            if not is_camera_on:
-                is_camera_on = True
-                trigger_camera("start_camera")
-                lgpio.gpio_write(chip, LED_PIN, 1)
-                print(f"🎥 START — Distance: {distance}mm")
+        print(f"Distance: {distance} mm")
 
-        if is_camera_on and (time.time() - last_seen > AUTO_STOP_DELAY):
-            is_camera_on = False
-            trigger_camera("stop_camera")
-            lgpio.gpio_write(chip, LED_PIN, 0)
-            print("🛑 STOP — no presence")
+        # ✅ Person detected (<= 500mm)
+        if distance <= DISTANCE_THRESHOLD:
+            last_seen_time = now
+            if not camera_started:
+                print("👤 Person detected - starting camera & LED ON")
+                GPIO.output(LED_PIN, GPIO.HIGH)
+                try:
+                    resp = requests.post(SERVER_URL, json={"action": "start_camera"}, timeout=5)
+                    print("✅ Server responded:", resp.status_code, resp.text)
+                except Exception as e:
+                    print("⚠️ Failed to notify server:", e)
+                camera_started = True
 
-        print(f"Distance: {distance}mm  | Camera: {is_camera_on}")
-        time.sleep(SENSOR_POLL_DELAY)
+        # 🚫 No person detected for a while
+        elif camera_started and (now - last_seen_time) > NO_PERSON_TIMEOUT:
+            print("🚶 No person for 10s - stopping camera & LED OFF")
+            GPIO.output(LED_PIN, GPIO.LOW)
+            try:
+                resp = requests.post(SERVER_URL, json={"action": "stop_camera"}, timeout=5)
+                print("✅ Server responded:", resp.status_code, resp.text)
+            except Exception as e:
+                print("⚠️ Failed to notify server:", e)
+            camera_started = False
+
+        time.sleep(0.5)
 
 except KeyboardInterrupt:
-    print("Exiting...")
-    lgpio.gpio_write(chip, LED_PIN, 0)
-    lgpio.gpiochip_close(chip)
+    print("\n🛑 Stopped by user")
+
+finally:
+    GPIO.output(LED_PIN, GPIO.LOW)
+    GPIO.cleanup()
