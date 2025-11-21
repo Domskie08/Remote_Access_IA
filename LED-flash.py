@@ -2,16 +2,17 @@ import time
 import requests
 import urllib3
 import lgpio
+import os
 from VL53L0X import VL53L0X
 
 # ---------------- CONFIGURATION ----------------
 LED_PIN = 17
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 SERVER_URL = "https://172.27.44.17:4173/api/camera"  # <-- change this
-#curl -k -X POST https://172.27.44.17:4173/api/camera -H "Content-Type: application/json" -d '{"action": "start_camera"}'
 THRESHOLD = 400       # mm; person detected if distance <= threshold
-AUTO_STOP_DELAY = 10    # seconds to turn off camera/LED after no detection
+AUTO_STOP_DELAY = 10    # seconds to turn off camera/LED/USB after no detection
 SENSOR_POLL_DELAY = 0.1 # 100ms between distance reads
+USB_FAILSAFE = True     # If True, skips USB ports that appear to be controllers (keyboard/mouse)
 # ------------------------------------------------
 
 # ---------------- GPIO SETUP --------------------
@@ -24,13 +25,42 @@ lgpio.gpio_write(chip, LED_PIN, 0)  # LED off
 sensor = VL53L0X()
 sensor.open()
 sensor.start_ranging()
-time.sleep(0.05)  # warm-up delay for first measurement
+time.sleep(0.05)  # warm-up delay
 # ------------------------------------------------
 
 # ---------------- STATE VARIABLES ----------------
 last_seen = 0
 camera_on = False
 # ------------------------------------------------
+
+def usb_off():
+    """Attempt to unbind all USB devices except controllers if fail-safe enabled"""
+    usb_devices = os.listdir("/sys/bus/usb/drivers/usb")
+    for dev in usb_devices:
+        if dev.startswith("usb"):
+            continue  # skip USB controller itself
+        if USB_FAILSAFE and ("1-1" in dev or "1-2" in dev):
+            # Skip common keyboard/mouse ports (adjust if needed)
+            continue
+        try:
+            with open("/sys/bus/usb/drivers/usb/unbind", "w") as f:
+                f.write(dev)
+            print(f"🔌 USB {dev} OFF")
+        except Exception as e:
+            print(f"❌ Failed to unbind {dev}: {e}")
+
+def usb_on():
+    """Attempt to bind all USB devices"""
+    usb_devices = os.listdir("/sys/bus/usb/drivers/usb")
+    for dev in usb_devices:
+        if dev.startswith("usb"):
+            continue
+        try:
+            with open("/sys/bus/usb/drivers/usb/bind", "w") as f:
+                f.write(dev)
+            print(f"🔌 USB {dev} ON")
+        except Exception as e:
+            print(f"❌ Failed to bind {dev}: {e}")
 
 print("Starting VL53L0X monitoring loop...")
 
@@ -42,7 +72,6 @@ try:
             print("⚠ Sensor read error:", e)
             distance = 0
 
-        # Print distance every loop
         if distance == 0:
             print("Distance: out of range / not ready")
         else:
@@ -59,6 +88,7 @@ try:
                 except Exception as e:
                     print(f"❌ Camera start request failed: {e}")
                 lgpio.gpio_write(chip, LED_PIN, 1)  # LED on
+                usb_on()  # Turn on USB devices (touchscreen)
 
         # Auto-stop after timeout
         if camera_on and (time.time() - last_seen > AUTO_STOP_DELAY):
@@ -69,6 +99,7 @@ try:
             except Exception as e:
                 print(f"❌ Camera stop request failed: {e}")
             lgpio.gpio_write(chip, LED_PIN, 0)  # LED off
+            usb_off()  # Turn off USB devices
 
         time.sleep(SENSOR_POLL_DELAY)
 
@@ -80,4 +111,5 @@ finally:
     sensor.close()
     lgpio.gpio_write(chip, LED_PIN, 0)
     lgpio.gpiochip_close(chip)
-    print("Cleaned up GPIO and sensor")
+    usb_on()  # Ensure USB is back on after exit
+    print("Cleaned up GPIO, sensor, and USB devices")
