@@ -3,6 +3,7 @@ import requests
 import urllib3
 import lgpio
 import os
+import subprocess
 from VL53L0X import VL53L0X
 
 # ---------------- CONFIGURATION ----------------
@@ -34,30 +35,31 @@ camera_on = False
 # ------------------------------------------------
 
 def usb_off():
-    """Attempt to unbind all USB devices except controllers if fail-safe enabled"""
     usb_devices = os.listdir("/sys/bus/usb/drivers/usb")
     for dev in usb_devices:
         if dev.startswith("usb"):
-            continue  # skip USB controller itself
+            continue
         if USB_FAILSAFE and ("1-1" in dev or "1-2" in dev):
-            # Skip common keyboard/mouse ports (adjust if needed)
             continue
         try:
-            with open("/sys/bus/usb/drivers/usb/unbind", "w") as f:
-                f.write(dev)
+            subprocess.run(
+                f"echo {dev} | sudo tee /sys/bus/usb/drivers/usb/unbind",
+                shell=True, check=True
+            )
             print(f"🔌 USB {dev} OFF")
         except Exception as e:
             print(f"❌ Failed to unbind {dev}: {e}")
 
 def usb_on():
-    """Attempt to bind all USB devices"""
     usb_devices = os.listdir("/sys/bus/usb/drivers/usb")
     for dev in usb_devices:
         if dev.startswith("usb"):
             continue
         try:
-            with open("/sys/bus/usb/drivers/usb/bind", "w") as f:
-                f.write(dev)
+            subprocess.run(
+                f"echo {dev} | sudo tee /sys/bus/usb/drivers/usb/bind",
+                shell=True, check=True
+            )
             print(f"🔌 USB {dev} ON")
         except Exception as e:
             print(f"❌ Failed to bind {dev}: {e}")
