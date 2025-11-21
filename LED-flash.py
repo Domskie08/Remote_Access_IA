@@ -3,18 +3,6 @@ import requests
 import urllib3
 import lgpio
 from VL53L0X import VL53L0X
-import subprocess  # <--- add this
-
-# ---------------- AUTORUN CHROME ----------------
-CHROME_URL = "https://172.27.44.17:4173/attendance-login"
-subprocess.Popen([
-    "/usr/bin/chromium",
-    "--kiosk",
-    "--disable-restore-session-state",
-    "--noerrdialogs",
-    "--incognito",
-    CHROME_URL
-])
 
 # ---------------- CONFIGURATION ----------------
 LED_PIN = 17
