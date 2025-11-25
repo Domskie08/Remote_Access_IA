@@ -2,6 +2,9 @@ import time
 import lgpio
 import threading
 import cv2
+import subprocess
+import os
+import signal
 from VL53L0X import VL53L0X
 
 # ---------------- CONFIGURATION ----------------
@@ -26,6 +29,46 @@ time.sleep(0.05)  # warm-up delay for first measurement
 # ------------------------------------------------
 
 # ---------------- CAMERA CONTROLLER -------------
+def release_device(dev='/dev/video0', term_timeout=1.0):
+    """Try to free a V4L2 device by sending SIGTERM then SIGKILL to holders.
+    Returns a list of PIDs that were signalled.
+    """
+    stopped = []
+    try:
+        out = subprocess.check_output(['lsof', '-t', dev], stderr=subprocess.DEVNULL)
+        pids = [int(x) for x in out.decode().split() if x.strip()]
+    except subprocess.CalledProcessError:
+        # no process holds it
+        return stopped
+
+    # First try graceful termination
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            stopped.append(pid)
+            print(f"Sent SIGTERM to PID {pid} holding {dev}")
+        except Exception as e:
+            print(f"Could not SIGTERM PID {pid}: {e}")
+
+    # wait a bit
+    time.sleep(term_timeout)
+
+    # Force kill remaining holders if any
+    try:
+        out2 = subprocess.check_output(['lsof', '-t', dev], stderr=subprocess.DEVNULL)
+        remaining = [int(x) for x in out2.decode().split() if x.strip()]
+    except subprocess.CalledProcessError:
+        remaining = []
+
+    for pid in remaining:
+        try:
+            os.kill(pid, signal.SIGKILL)
+            print(f"Sent SIGKILL to PID {pid} holding {dev}")
+        except Exception as e:
+            print(f"Could not SIGKILL PID {pid}: {e}")
+
+    return stopped
+
 class CameraController:
     """Simple controller to open/release a USB camera.
     Keeps a background thread reading frames so the device stays active."""
@@ -38,6 +81,13 @@ class CameraController:
     def start(self):
         if self.cap is not None:
             return  # already started
+        # Try to release any process holding the device (e.g., a web streamer)
+        dev_path = f"/dev/video{self.device}"
+        try:
+            release_device(dev_path)
+        except Exception as e:
+            print(f"Warning: failed to release device {dev_path}: {e}")
+
         self.cap = cv2.VideoCapture(self.device)
         if not self.cap.isOpened():
             self.cap = None
