@@ -131,6 +131,7 @@ camera = CameraController(device=CAMERA_DEVICE)
 # ---------------- STATE VARIABLES ----------------
 last_seen = 0
 camera_on = False
+led_on = False
 # ------------------------------------------------
 
 print("Starting VL53L0X monitoring loop...")
@@ -153,24 +154,38 @@ try:
         if 0 < distance <= THRESHOLD:
             last_seen = time.time()
             if not camera_on:
-                camera_on = True
                 try:
                     camera.start()
+                    camera_on = True
                     print(f"🎥 Camera started! Distance: {distance} mm")
                 except Exception as e:
-                    print(f"❌ Failed to start camera: {e}")
+                    # Device busy or cannot open; do not kill holders.
                     camera_on = False
-                lgpio.gpio_write(chip, LED_PIN, 1)  # LED on
+                    print(f"❌ Local camera unavailable: {e} -- leaving web client running")
+                # Turn LED on to show presence regardless of camera availability
+                try:
+                    lgpio.gpio_write(chip, LED_PIN, 1)
+                    led_on = True
+                except Exception:
+                    led_on = False
 
         # Auto-stop after timeout -> stop camera + LED
-        if camera_on and (time.time() - last_seen > AUTO_STOP_DELAY):
-            camera_on = False
-            try:
-                camera.stop()
-                print("🛑 Camera stopped (no presence)")
-            except Exception as e:
-                print(f"❌ Failed to stop camera: {e}")
-            lgpio.gpio_write(chip, LED_PIN, 0)  # LED off
+        if (camera_on or led_on) and (time.time() - last_seen > AUTO_STOP_DELAY):
+            # stop camera if it is running
+            if camera_on:
+                try:
+                    camera.stop()
+                    print("🛑 Camera stopped (no presence)")
+                except Exception as e:
+                    print(f"❌ Failed to stop camera: {e}")
+                camera_on = False
+            # turn LED off if it was on
+            if led_on:
+                try:
+                    lgpio.gpio_write(chip, LED_PIN, 0)
+                except Exception:
+                    pass
+                led_on = False
 
         time.sleep(SENSOR_POLL_DELAY)
 
