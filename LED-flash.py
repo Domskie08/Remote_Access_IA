@@ -11,7 +11,7 @@ import traceback
 # ---------------- CONFIGURATION ----------------
 LED_PIN = 17
 # central server base URL (example)
-SERVER_URL = "https://<central_server_ip>:4173"
+SERVER_URL = "https:172.27.44.17:4173"
 KIOSK_ID = "Kiosk_1"          # set per-device
 TOKEN = None                  # if you use a token, set it here (will be appended to SSE URL as query param)
 THRESHOLD = 400               # mm - sensor distance threshold to consider a person present
