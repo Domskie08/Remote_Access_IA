@@ -1,23 +1,21 @@
 import time
-import requests
-import urllib3
 import lgpio
+import threading
+import cv2
 from VL53L0X import VL53L0X
 
 # ---------------- CONFIGURATION ----------------
 LED_PIN = 17
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-SERVER_URL = "https://172.27.44.17:4173/api/camera"  # <-- change this
-#curl -k -X POST https://172.27.44.17:4173/api/camera -H "Content-Type: application/json" -d '{"action": "start_camera"}'
 THRESHOLD = 400       # mm; person detected if distance <= threshold
 AUTO_STOP_DELAY = 10    # seconds to turn off camera/LED after no detection
 SENSOR_POLL_DELAY = 0.1 # 100ms between distance reads
+CAMERA_DEVICE = 0       # /dev/video0
 # ------------------------------------------------
 
 # ---------------- GPIO SETUP --------------------
 chip = lgpio.gpiochip_open(0)
 lgpio.gpio_claim_output(chip, LED_PIN)
-lgpio.gpio_write(chip, LED_PIN, 0)  # LED of
+lgpio.gpio_write(chip, LED_PIN, 0)  # LED off
 # ------------------------------------------------
 
 # ---------------- SENSOR SETUP ------------------
@@ -25,6 +23,53 @@ sensor = VL53L0X()
 sensor.open()
 sensor.start_ranging()
 time.sleep(0.05)  # warm-up delay for first measurement
+# ------------------------------------------------
+
+# ---------------- CAMERA CONTROLLER -------------
+class CameraController:
+    """Simple controller to open/release a USB camera.
+    Keeps a background thread reading frames so the device stays active."""
+    def __init__(self, device=0):
+        self.device = device
+        self.cap = None
+        self.thread = None
+        self.running = False
+
+    def start(self):
+        if self.cap is not None:
+            return  # already started
+        self.cap = cv2.VideoCapture(self.device)
+        if not self.cap.isOpened():
+            self.cap = None
+            raise RuntimeError(f"Failed to open camera device {self.device}")
+        self.running = True
+        self.thread = threading.Thread(target=self._reader, daemon=True)
+        self.thread.start()
+
+    def _reader(self):
+        # Continuous read; discard frames (prevents driver from sleeping)
+        while self.running and self.cap is not None:
+            ret, frame = self.cap.read()
+            if not ret:
+                time.sleep(0.01)
+                continue
+            # Frame consumed and discarded. Add processing here if needed.
+            time.sleep(0.01)
+
+    def stop(self):
+        if self.cap is None:
+            return
+        self.running = False
+        if self.thread is not None:
+            self.thread.join(timeout=0.5)
+            self.thread = None
+        try:
+            self.cap.release()
+        except Exception:
+            pass
+        self.cap = None
+
+camera = CameraController(device=CAMERA_DEVICE)
 # ------------------------------------------------
 
 # ---------------- STATE VARIABLES ----------------
@@ -48,36 +93,42 @@ try:
         else:
             print(f"Distance: {distance} mm")
 
-        # Person detected
+        # Person detected -> start camera + LED
         if 0 < distance <= THRESHOLD:
             last_seen = time.time()
             if not camera_on:
                 camera_on = True
                 try:
-                    requests.post(SERVER_URL, json={"action": "start_camera"}, timeout=5,verify=False)
+                    camera.start()
                     print(f"🎥 Camera started! Distance: {distance} mm")
                 except Exception as e:
-                    print(f"❌ Camera start request failed: {e}")
+                    print(f"❌ Failed to start camera: {e}")
+                    camera_on = False
                 lgpio.gpio_write(chip, LED_PIN, 1)  # LED on
 
-        # Auto-stop after timeout
+        # Auto-stop after timeout -> stop camera + LED
         if camera_on and (time.time() - last_seen > AUTO_STOP_DELAY):
             camera_on = False
             try:
-                requests.post(SERVER_URL, json={"action": "stop_camera"}, timeout=5,verify=False)
+                camera.stop()
                 print("🛑 Camera stopped (no presence)")
             except Exception as e:
-                print(f"❌ Camera stop request failed: {e}")
+                print(f"❌ Failed to stop camera: {e}")
             lgpio.gpio_write(chip, LED_PIN, 0)  # LED off
 
         time.sleep(SENSOR_POLL_DELAY)
 
 except KeyboardInterrupt:
     print("\nExiting program...")
+
 finally:
     # Cleanup
-    sensor.stop_ranging()
-    sensor.close()
+    try:
+        sensor.stop_ranging()
+        sensor.close()
+    except Exception:
+        pass
+    camera.stop()
     lgpio.gpio_write(chip, LED_PIN, 0)
     lgpio.gpiochip_close(chip)
-    print("Cleaned up GPIO and sensor")
+    print("Cleaned up GPIO, camera and sensor")
