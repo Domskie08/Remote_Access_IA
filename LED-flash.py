@@ -81,12 +81,18 @@ class CameraController:
     def start(self):
         if self.cap is not None:
             return  # already started
-        # Try to release any process holding the device (e.g., a web streamer)
+        # If another process already holds the device, do NOT kill it.
+        # Check and skip starting the local camera to avoid interrupting web clients.
         dev_path = f"/dev/video{self.device}"
         try:
-            release_device(dev_path)
-        except Exception as e:
-            print(f"Warning: failed to release device {dev_path}: {e}")
+            out = subprocess.check_output(['lsof', '-t', dev_path], stderr=subprocess.DEVNULL)
+            holders = [int(x) for x in out.decode().split() if x.strip()]
+            if holders:
+                print(f"Device {dev_path} is in use by PIDs {holders}; skipping local camera start to avoid interrupting them")
+                raise RuntimeError(f"Device {dev_path} busy")
+        except subprocess.CalledProcessError:
+            # no one holds it, safe to open
+            pass
 
         self.cap = cv2.VideoCapture(self.device)
         if not self.cap.isOpened():
