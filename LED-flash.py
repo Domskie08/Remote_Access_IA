@@ -15,7 +15,7 @@ SENSOR_POLL_DELAY = 0.1
 CAMERA_DEVICE = 0       # /dev/video0
 
 # *** IMPORTANT: Set to your camera USB path (example: "1-1.2") ***
-USB_CAMERA_PATH = "1-1.2"
+USB_CAMERA_PATH = "1-3.5"
 # ------------------------------------------------
 
 
