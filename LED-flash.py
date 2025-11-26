@@ -4,6 +4,7 @@ import threading
 import cv2
 from flask import Flask, Response
 from VL53L0X import VL53L0X
+import socket
 
 # ---------------- CONFIGURATION ----------------
 LED_PIN = 17
@@ -13,8 +14,24 @@ SENSOR_POLL_DELAY = 0.1
 CAMERA_DEVICE = 0       # /dev/video0
 CAMERA_WIDTH = 1920     # 1080p width
 CAMERA_HEIGHT = 1080    # 1080p height
-CAMERA_FPS = 25         # can go higher since resolution is lower
+CAMERA_FPS = 25
 MJPEG_QUALITY = 90
+FLASK_PORT = 8000
+# ------------------------------------------------
+
+# ---------------- HELPER: AUTO IP ----------------
+def get_local_ip():
+    """Returns the Raspberry Pi's local IP address."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # doesn't need to be reachable
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
 # ------------------------------------------------
 
 # ---------------- GPIO SETUP --------------------
@@ -33,7 +50,7 @@ time.sleep(0.05)
 # ---------------- CAMERA CONTROLLER -------------
 class CameraController:
     """Handles opening and streaming MJPEG frames from a USB camera."""
-    def __init__(self, device=0, width=3840, height=2160, fps=25, quality=90):
+    def __init__(self, device=0, width=1920, height=1080, fps=15, quality=90):
         self.device = device
         self.width = width
         self.height = height
@@ -50,7 +67,7 @@ class CameraController:
             return
 
         self.cap = cv2.VideoCapture(self.device)
-        # set 4K resolution
+        # set resolution
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self.cap.set(cv2.CAP_PROP_FPS, self.fps)
@@ -125,7 +142,7 @@ def stream():
 
 @app.route("/")
 def root():
-    return "MJPEG 4K Camera running."
+    return "MJPEG Camera running."
 # ------------------------------------------------
 
 # ---------------- STATE VARIABLES ----------------
@@ -134,6 +151,17 @@ camera_on = False
 led_on = False
 # ------------------------------------------------
 
+# ---------------- START FLASK SERVER ----------------
+def run_flask():
+    app.run(host="0.0.0.0", port=FLASK_PORT, threaded=True)
+
+threading.Thread(target=run_flask, daemon=True).start()
+
+pi_ip = get_local_ip()
+print(f"🎥 MJPEG streaming available at http://{pi_ip}:{FLASK_PORT}/stream.mjpg")
+# ------------------------------------------------
+
+# ---------------- VL53L0X LOOP ----------------
 print("Starting VL53L0X monitoring loop...")
 
 try:
@@ -193,9 +221,3 @@ finally:
     lgpio.gpio_write(chip, LED_PIN, 0)
     lgpio.gpiochip_close(chip)
     print("Cleanup done.")
-
-# ---------------- RUN FLASK SERVER ----------------
-if __name__ == "__main__":
-    # run Flask in a separate thread to allow main loop to run
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=8000, threaded=True), daemon=True).start()
-    print("MJPEG streaming available at http://<raspi-ip>:8000/stream.mjpg")
