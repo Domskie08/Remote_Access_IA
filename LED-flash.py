@@ -19,7 +19,7 @@ CAMERA_FPS = 25
 MJPEG_QUALITY = 90
 
 FLASK_PORT = 8443       # HTTPS port
-CERT_DIR = "/home/pi/certs"
+CERT_DIR = "/home/admin/certs"
 CERT_FILE = os.path.join(CERT_DIR, "mjpeg.crt")
 KEY_FILE = os.path.join(CERT_DIR, "mjpeg.key")
 # ------------------------------------------------
