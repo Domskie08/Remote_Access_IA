@@ -18,10 +18,7 @@ CAMERA_HEIGHT = 1080
 CAMERA_FPS = 25
 MJPEG_QUALITY = 90
 
-FLASK_PORT = 8443       # HTTPS port
-CERT_DIR = "/home/admin/certs"
-CERT_FILE = os.path.join(CERT_DIR, "mjpeg.crt")
-KEY_FILE = os.path.join(CERT_DIR, "mjpeg.key")
+FLASK_PORT = 8080       # HTTP PORT (was 8443 HTTPS)
 # ------------------------------------------------
 
 # ---------------- HELPER: AUTO IP ----------------
@@ -150,7 +147,7 @@ def stream():
 
 @app.route("/")
 def root():
-    return "MJPEG Camera running over HTTPS."
+    return "MJPEG Camera running over HTTP."
 
 @app.route("/api/pi-ip")
 def api_pi_ip():
@@ -165,14 +162,11 @@ led_on = False
 
 # ---------------- START FLASK SERVER ----------------
 def run_flask():
-    if not (os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE)):
-        raise RuntimeError(f"Certificate or key file missing! Generate in {CERT_DIR}")
-    app.run(host="0.0.0.0", port=FLASK_PORT, threaded=True,
-            ssl_context=(CERT_FILE, KEY_FILE))
+    app.run(host="0.0.0.0", port=FLASK_PORT, threaded=True)
 
 threading.Thread(target=run_flask, daemon=True).start()
 pi_ip = get_local_ip()
-print(f"🎥 MJPEG streaming available at https://{pi_ip}:{FLASK_PORT}/stream.mjpg")
+print(f"🎥 MJPEG streaming available at http://{pi_ip}:{FLASK_PORT}/stream.mjpg")
 # ------------------------------------------------
 
 # ---------------- VL53L0X LOOP ----------------
