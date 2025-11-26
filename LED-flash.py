@@ -1,38 +1,20 @@
 import time
-import subprocess
 import lgpio
-import socket
-from flask import Flask, jsonify
+import threading
+import cv2
+from flask import Flask, Response
 from VL53L0X import VL53L0X
-from threading import Thread
 
 # ---------------- CONFIGURATION ----------------
 LED_PIN = 17
-MJPEG_STREAM_CMD = [
-    "mjpg_streamer",
-    "-i", "input_uvc.so -r 640x480 -f 30",
-    "-o", "output_http.so -p 8080 -w ./www"
-]
-THRESHOLD = 400
-AUTO_STOP_DELAY = 10
+THRESHOLD = 400         # mm; person detected if distance <= threshold
+AUTO_STOP_DELAY = 10    # seconds to turn off camera/LED after no detection
 SENSOR_POLL_DELAY = 0.1
-# ------------------------------------------------
-
-# ---------------- AUTO DETECT IP ----------------
-def get_local_ip():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-    except Exception:
-        ip = "127.0.0.1"
-    finally:
-        s.close()
-    return ip
-
-RASPI_IP = get_local_ip()
-MJPEG_STREAM_URL = f"http://{RASPI_IP}:8080/?action=stream"
-print(f"📡 Detected MJPEG stream URL: {MJPEG_STREAM_URL}")
+CAMERA_DEVICE = 0       # /dev/video0
+CAMERA_WIDTH = 1920     # 1080p width
+CAMERA_HEIGHT = 1080    # 1080p height
+CAMERA_FPS = 25         # can go higher since resolution is lower
+MJPEG_QUALITY = 90
 # ------------------------------------------------
 
 # ---------------- GPIO SETUP --------------------
@@ -48,86 +30,172 @@ sensor.start_ranging()
 time.sleep(0.05)
 # ------------------------------------------------
 
+# ---------------- CAMERA CONTROLLER -------------
+class CameraController:
+    """Handles opening and streaming MJPEG frames from a USB camera."""
+    def __init__(self, device=0, width=3840, height=2160, fps=25, quality=90):
+        self.device = device
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.quality = quality
+        self.cap = None
+        self.running = False
+        self.thread = None
+        self.frame = None
+        self.lock = threading.Lock()
+
+    def start(self):
+        if self.cap is not None:
+            return
+
+        self.cap = cv2.VideoCapture(self.device)
+        # set 4K resolution
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        self.cap.set(cv2.CAP_PROP_FPS, self.fps)
+        # force MJPEG
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+
+        if not self.cap.isOpened():
+            self.cap = None
+            raise RuntimeError(f"Failed to open camera device {self.device}")
+
+        self.running = True
+        self.thread = threading.Thread(target=self._reader, daemon=True)
+        self.thread.start()
+
+    def _reader(self):
+        while self.running and self.cap is not None:
+            ret, frame = self.cap.read()
+            if not ret:
+                time.sleep(0.01)
+                continue
+            with self.lock:
+                self.frame = frame
+            time.sleep(0.01)
+
+    def get_frame(self):
+        with self.lock:
+            if self.frame is None:
+                return None
+            ret, jpeg = cv2.imencode(".jpg", self.frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality])
+            if not ret:
+                return None
+            return jpeg.tobytes()
+
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=0.5)
+            self.thread = None
+        if self.cap:
+            self.cap.release()
+            self.cap = None
+
+camera = CameraController(
+    device=CAMERA_DEVICE,
+    width=CAMERA_WIDTH,
+    height=CAMERA_HEIGHT,
+    fps=CAMERA_FPS,
+    quality=MJPEG_QUALITY
+)
+# ------------------------------------------------
+
+# ---------------- FLASK MJPEG SERVER -------------
+app = Flask(__name__)
+
+def mjpeg_generator():
+    while True:
+        frame = camera.get_frame()
+        if frame is None:
+            time.sleep(0.01)
+            continue
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" +
+            frame +
+            b"\r\n"
+        )
+
+@app.route("/stream.mjpg")
+def stream():
+    return Response(mjpeg_generator(),
+                    mimetype="multipart/x-mixed-replace; boundary=frame")
+
+@app.route("/")
+def root():
+    return "MJPEG 4K Camera running."
+# ------------------------------------------------
+
 # ---------------- STATE VARIABLES ----------------
 last_seen = 0
 camera_on = False
-mjpeg_process = None
+led_on = False
 # ------------------------------------------------
 
-# ---------------- FLASK SERVER ------------------
-app = Flask(__name__)
+print("Starting VL53L0X monitoring loop...")
 
-@app.route("/api/stream-url")
-def stream_url():
-    return jsonify({"url": MJPEG_STREAM_URL})
+try:
+    while True:
+        try:
+            distance = sensor.get_distance()
+        except Exception as e:
+            print("⚠ Sensor read error:", e)
+            distance = 0
 
-def run_server():
-    app.run(host="0.0.0.0", port=5000)
-# ------------------------------------------------
+        if distance == 0:
+            print("Distance: out of range")
+        else:
+            print(f"Distance: {distance} mm")
 
-# ---------------- SENSOR LOOP ------------------
-def sensor_loop():
-    global camera_on, mjpeg_process, last_seen
-
-    print("Starting VL53L0X monitoring loop...")
-    try:
-        while True:
-            try:
-                distance = sensor.get_distance()
-            except Exception as e:
-                print("⚠ Sensor read error:", e)
-                distance = 0
-
-            if distance == 0:
-                print("Distance: out of range / not ready")
-            else:
-                print(f"Distance: {distance} mm")
-
-            # Person detected → start MJPEG
-            if 0 < distance <= THRESHOLD:
-                last_seen = time.time()
-                if not camera_on:
+        # Person detected -> start camera + LED
+        if 0 < distance <= THRESHOLD:
+            last_seen = time.time()
+            if not camera_on:
+                try:
+                    camera.start()
                     camera_on = True
-                    try:
-                        mjpeg_process = subprocess.Popen(MJPEG_STREAM_CMD)
-                        print(f"🎥 MJPEG-Streamer started! Stream URL: {MJPEG_STREAM_URL}")
-                    except Exception as e:
-                        print(f"❌ Failed to start MJPEG-Streamer: {e}")
-                    lgpio.gpio_write(chip, LED_PIN, 1)
+                    print(f"🎥 Camera started! Distance: {distance} mm")
+                except Exception as e:
+                    print(f"❌ Camera unavailable: {e}")
+                    camera_on = False
 
-            # Auto-stop after timeout
-            if camera_on and (time.time() - last_seen > AUTO_STOP_DELAY):
+            lgpio.gpio_write(chip, LED_PIN, 1)
+            led_on = True
+
+        # Auto-stop after timeout -> stop camera + LED
+        if (camera_on or led_on) and (time.time() - last_seen > AUTO_STOP_DELAY):
+            if camera_on:
+                try:
+                    camera.stop()
+                    print("🛑 Camera stopped (no presence)")
+                except Exception as e:
+                    print(f"❌ Failed to stop camera: {e}")
                 camera_on = False
-                if mjpeg_process:
-                    try:
-                        mjpeg_process.terminate()
-                        mjpeg_process.wait()
-                        mjpeg_process = None
-                        print("🛑 MJPEG-Streamer stopped (no presence)")
-                    except Exception as e:
-                        print(f"❌ Failed to stop MJPEG-Streamer: {e}")
+
+            if led_on:
                 lgpio.gpio_write(chip, LED_PIN, 0)
+                led_on = False
 
-            time.sleep(SENSOR_POLL_DELAY)
+        time.sleep(SENSOR_POLL_DELAY)
 
-    except KeyboardInterrupt:
-        print("\nExiting sensor loop...")
-    finally:
+except KeyboardInterrupt:
+    print("\nExiting program...")
+
+finally:
+    try:
         sensor.stop_ranging()
         sensor.close()
-        lgpio.gpio_write(chip, LED_PIN, 0)
-        lgpio.gpiochip_close(chip)
-        if mjpeg_process:
-            mjpeg_process.terminate()
-            mjpeg_process.wait()
-        print("Cleaned up GPIO, sensor, and MJPEG-Streamer")
-# ------------------------------------------------
+    except:
+        pass
+    camera.stop()
+    lgpio.gpio_write(chip, LED_PIN, 0)
+    lgpio.gpiochip_close(chip)
+    print("Cleanup done.")
 
-# ---------------- MAIN ------------------
+# ---------------- RUN FLASK SERVER ----------------
 if __name__ == "__main__":
-    # Run Flask server in a separate thread
-    server_thread = Thread(target=run_server, daemon=True)
-    server_thread.start()
-
-    # Run sensor loop in main thread
-    sensor_loop()
+    # run Flask in a separate thread to allow main loop to run
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=8000, threaded=True), daemon=True).start()
+    print("MJPEG streaming available at http://<raspi-ip>:8000/stream.mjpg")
