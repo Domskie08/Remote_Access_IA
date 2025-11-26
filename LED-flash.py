@@ -147,6 +147,10 @@ def stream():
 @app.route("/")
 def root():
     return "MJPEG Camera running over HTTPS."
+
+@app.route("/api/pi-ip")
+def api_pi_ip():
+    return {"ip": get_local_ip()}
 # ------------------------------------------------
 
 # ---------------- STATE VARIABLES ----------------
