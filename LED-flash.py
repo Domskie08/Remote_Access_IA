@@ -6,24 +6,31 @@ from flask import Flask, Response
 from VL53L0X import VL53L0X
 import socket
 import os
+import asyncio
+import websockets
+import json
+import threading
+
+# -----------------------------------
+# HARD-CODE DEVICE NAME HERE
+DEVICE_NAME = "device1"
+CENTRAL_WS = "ws://192.168.100.15:8765"      # <--- change to your laptop/server IP
+# -----------------------------------
 
 # ---------------- CONFIGURATION ----------------
 LED_PIN = 17
-THRESHOLD = 400         # mm; person detected if distance <= threshold
-AUTO_STOP_DELAY = 10    # seconds to turn off camera/LED after no detection
+THRESHOLD = 400
+AUTO_STOP_DELAY = 10
 SENSOR_POLL_DELAY = 0.1
-CAMERA_DEVICE = 0       # /dev/video0
-CAMERA_WIDTH = 1920     # 1080p width
+CAMERA_DEVICE = 0
+CAMERA_WIDTH = 1920
 CAMERA_HEIGHT = 1080
 CAMERA_FPS = 25
 MJPEG_QUALITY = 90
-
-FLASK_PORT = 8080       # HTTP PORT (was 8443 HTTPS)
+FLASK_PORT = 8080
 # ------------------------------------------------
 
-# ---------------- HELPER: AUTO IP ----------------
 def get_local_ip():
-    """Returns the Raspberry Pi's local IP address."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("8.8.8.8", 80))
@@ -33,22 +40,19 @@ def get_local_ip():
     finally:
         s.close()
     return ip
-# ------------------------------------------------
 
 # ---------------- GPIO SETUP --------------------
 chip = lgpio.gpiochip_open(0)
 lgpio.gpio_claim_output(chip, LED_PIN)
 lgpio.gpio_write(chip, LED_PIN, 0)
-# ------------------------------------------------
 
-# ---------------- SENSOR SETUP ------------------
+# -------------- SENSOR SETUP --------------------
 sensor = VL53L0X()
 sensor.open()
 sensor.start_ranging()
 time.sleep(0.05)
-# ------------------------------------------------
 
-# ---------------- CAMERA CONTROLLER -------------
+# ---------------- CAMERA ------------------------
 class CameraController:
     def __init__(self, device=0, width=1920, height=1080, fps=25, quality=90):
         self.device = device
@@ -115,7 +119,6 @@ camera = CameraController(
     fps=CAMERA_FPS,
     quality=MJPEG_QUALITY
 )
-# ------------------------------------------------
 
 # ---------------- FLASK MJPEG SERVER -------------
 app = Flask(__name__)
@@ -152,13 +155,6 @@ def root():
 @app.route("/api/pi-ip")
 def api_pi_ip():
     return {"ip": get_local_ip()}
-# ------------------------------------------------
-
-# ---------------- STATE VARIABLES ----------------
-last_seen = 0
-camera_on = False
-led_on = False
-# ------------------------------------------------
 
 # ---------------- START FLASK SERVER ----------------
 def run_flask():
@@ -166,24 +162,51 @@ def run_flask():
 
 threading.Thread(target=run_flask, daemon=True).start()
 pi_ip = get_local_ip()
-print(f"🎥 MJPEG streaming available at http://{pi_ip}:{FLASK_PORT}/stream.mjpg")
-# ------------------------------------------------
+print(f"🎥 MJPEG streaming at http://{pi_ip}:{FLASK_PORT}/stream.mjpg")
+
+# ---------------- WEBSOCKET CLIENT ----------------
+async def ws_loop():
+    while True:
+        try:
+            async with websockets.connect(CENTRAL_WS) as ws:
+                print("Connected to central WebSocket server")
+
+                # register device
+                await ws.send(json.dumps({
+                    "type": "register",
+                    "device": DEVICE_NAME
+                }))
+
+                async for msg in ws:
+                    data = json.loads(msg)
+                    if data["type"] == "stream_url":
+                        print(f"Central server confirmed stream URL: {data['url']}")
+
+        except Exception as e:
+            print("WebSocket error:", e)
+            await asyncio.sleep(5)
+
+# run WS in background thread
+def start_ws_thread():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(ws_loop())
+
+threading.Thread(target=start_ws_thread, daemon=True).start()
 
 # ---------------- VL53L0X LOOP ----------------
 print("Starting VL53L0X monitoring loop...")
+
+last_seen = 0
+camera_on = False
+led_on = False
 
 try:
     while True:
         try:
             distance = sensor.get_distance()
-        except Exception as e:
-            print("⚠ Sensor read error:", e)
+        except:
             distance = 0
-
-        if distance == 0:
-            print("Distance: out of range")
-        else:
-            print(f"Distance: {distance} mm")
 
         if 0 < distance <= THRESHOLD:
             last_seen = time.time()
@@ -191,22 +214,18 @@ try:
                 try:
                     camera.start()
                     camera_on = True
-                    print(f"🎥 Camera started! Distance: {distance} mm")
+                    print(f"🎥 Camera started! {distance} mm")
                 except Exception as e:
-                    print(f"❌ Camera unavailable: {e}")
-                    camera_on = False
+                    print("Camera start failed:", e)
 
             lgpio.gpio_write(chip, LED_PIN, 1)
             led_on = True
 
         if (camera_on or led_on) and (time.time() - last_seen > AUTO_STOP_DELAY):
             if camera_on:
-                try:
-                    camera.stop()
-                    print("🛑 Camera stopped (no presence)")
-                except Exception as e:
-                    print(f"❌ Failed to stop camera: {e}")
+                camera.stop()
                 camera_on = False
+                print("🛑 Camera stopped (no presence)")
 
             if led_on:
                 lgpio.gpio_write(chip, LED_PIN, 0)
@@ -215,7 +234,7 @@ try:
         time.sleep(SENSOR_POLL_DELAY)
 
 except KeyboardInterrupt:
-    print("\nExiting program...")
+    print("Exiting...")
 
 finally:
     try:
