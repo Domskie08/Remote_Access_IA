@@ -1,59 +1,45 @@
 import time
-import lgpio
-import threading
-import cv2
 import subprocess
-import os
-import signal
+import lgpio
+import socket
+from flask import Flask, jsonify
 from VL53L0X import VL53L0X
+from threading import Thread
 
 # ---------------- CONFIGURATION ----------------
 LED_PIN = 17
+MJPEG_STREAM_CMD = [
+    "mjpg_streamer",
+    "-i", "input_uvc.so -r 640x480 -f 30",
+    "-o", "output_http.so -p 8080 -w ./www"
+]
 THRESHOLD = 400
 AUTO_STOP_DELAY = 10
 SENSOR_POLL_DELAY = 0.1
-CAMERA_DEVICE = 0       # /dev/video0
-
-# *** IMPORTANT: Set to your camera USB path (example: "1-1.2") ***
-USB_CAMERA_PATH = "1-3.5"
 # ------------------------------------------------
 
-
-# ---------------- USB CAMERA RESET ---------------
-def usb_cam_off():
-    """Unbind (turn OFF) the USB camera."""
+# ---------------- AUTO DETECT IP ----------------
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        with open(f"/sys/bus/usb/devices/{USB_CAMERA_PATH}/driver/unbind", "w") as f:
-            f.write(USB_CAMERA_PATH)
-        print("🔌 USB Camera OFF (unbind)")
-    except Exception as e:
-        print("⚠ Failed to unbind camera:", e)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
 
-def usb_cam_on():
-    """Rebind (turn ON) the USB camera."""
-    try:
-        with open(f"/sys/bus/usb/devices/{USB_CAMERA_PATH}/driver/bind", "w") as f:
-            f.write(USB_CAMERA_PATH)
-        print("🔌 USB Camera ON (bind)")
-    except Exception as e:
-        print("⚠ Failed to bind camera:", e)
-
-def force_camera_reset():
-    """Full USB reset: OFF → wait → ON."""
-    print("♻️  FULL CAMERA RESET...")
-    usb_cam_off()
-    time.sleep(1)
-    usb_cam_on()
-    time.sleep(1)
+RASPI_IP = get_local_ip()
+MJPEG_STREAM_URL = f"http://{RASPI_IP}:8080/?action=stream"
+print(f"📡 Detected MJPEG stream URL: {MJPEG_STREAM_URL}")
 # ------------------------------------------------
-
 
 # ---------------- GPIO SETUP --------------------
 chip = lgpio.gpiochip_open(0)
 lgpio.gpio_claim_output(chip, LED_PIN)
 lgpio.gpio_write(chip, LED_PIN, 0)
 # ------------------------------------------------
-
 
 # ---------------- SENSOR SETUP ------------------
 sensor = VL53L0X()
@@ -62,134 +48,86 @@ sensor.start_ranging()
 time.sleep(0.05)
 # ------------------------------------------------
 
-
-# ---------------- CAMERA CONTROLLER -------------
-class CameraController:
-    def __init__(self, device=0):
-        self.device = device
-        self.cap = None
-        self.thread = None
-        self.running = False
-
-    def start(self):
-        if self.cap is not None:
-            return
-
-        dev_path = f"/dev/video{self.device}"
-
-        # Check device busy holders
-        try:
-            out = subprocess.check_output(["lsof", "-t", dev_path], stderr=subprocess.DEVNULL)
-            holders = [int(x) for x in out.decode().split() if x.strip()]
-            if holders:
-                print(f"❌ {dev_path} busy by PIDs {holders}. Resetting USB...")
-                force_camera_reset()
-        except subprocess.CalledProcessError:
-            pass  # free
-
-        # Try to open camera after reset
-        self.cap = cv2.VideoCapture(self.device)
-        if not self.cap.isOpened():
-            print("❌ Camera failed to open, retrying USB reset...")
-            force_camera_reset()
-            self.cap = cv2.VideoCapture(self.device)
-
-        if not self.cap.isOpened():
-            self.cap = None
-            raise RuntimeError(f"Failed to open camera device {self.device}")
-
-        self.running = True
-        self.thread = threading.Thread(target=self._reader, daemon=True)
-        self.thread.start()
-
-    def _reader(self):
-        while self.running and self.cap is not None:
-            ret, frame = self.cap.read()
-            if not ret:
-                time.sleep(0.01)
-                continue
-            time.sleep(0.01)
-
-    def stop(self):
-        if self.cap is None:
-            return
-        self.running = False
-        if self.thread:
-            self.thread.join(timeout=0.5)
-            self.thread = None
-        try:
-            self.cap.release()
-        except:
-            pass
-        self.cap = None
-
-
-camera = CameraController(device=CAMERA_DEVICE)
-# ------------------------------------------------
-
-
 # ---------------- STATE VARIABLES ----------------
 last_seen = 0
 camera_on = False
-led_on = False
+mjpeg_process = None
 # ------------------------------------------------
 
-print("Starting VL53L0X monitoring loop...")
+# ---------------- FLASK SERVER ------------------
+app = Flask(__name__)
 
-try:
-    while True:
-        try:
-            distance = sensor.get_distance()
-        except Exception as e:
-            print("⚠ Sensor read error:", e)
-            distance = 0
+@app.route("/api/stream-url")
+def stream_url():
+    return jsonify({"url": MJPEG_STREAM_URL})
 
-        if distance == 0:
-            print("Distance: out of range")
-        else:
-            print(f"Distance: {distance} mm")
+def run_server():
+    app.run(host="0.0.0.0", port=5000)
+# ------------------------------------------------
 
-        # ------------- PERSON DETECTED -------------
-        if 0 < distance <= THRESHOLD:
-            last_seen = time.time()
-            if not camera_on:
-                try:
-                    camera.start()
-                    camera_on = True
-                    print(f"🎥 Camera started! {distance} mm")
-                except Exception as e:
-                    print(f"❌ Camera unavailable: {e}")
-                    camera_on = False
+# ---------------- SENSOR LOOP ------------------
+def sensor_loop():
+    global camera_on, mjpeg_process, last_seen
 
-                lgpio.gpio_write(chip, LED_PIN, 1)
-                led_on = True
-
-        # ------------- STOP AFTER TIMEOUT -------------
-        if (camera_on or led_on) and (time.time() - last_seen > AUTO_STOP_DELAY):
-            if camera_on:
-                try:
-                    camera.stop()
-                    print("🛑 Camera stopped (no presence)")
-                except Exception as e:
-                    print(f"❌ Failed to stop camera: {e}")
-                camera_on = False
-
-            if led_on:
-                lgpio.gpio_write(chip, LED_PIN, 0)
-                led_on = False
-
-        time.sleep(SENSOR_POLL_DELAY)
-
-except KeyboardInterrupt:
-    print("\nExiting...")
-
-finally:
+    print("Starting VL53L0X monitoring loop...")
     try:
+        while True:
+            try:
+                distance = sensor.get_distance()
+            except Exception as e:
+                print("⚠ Sensor read error:", e)
+                distance = 0
+
+            if distance == 0:
+                print("Distance: out of range / not ready")
+            else:
+                print(f"Distance: {distance} mm")
+
+            # Person detected → start MJPEG
+            if 0 < distance <= THRESHOLD:
+                last_seen = time.time()
+                if not camera_on:
+                    camera_on = True
+                    try:
+                        mjpeg_process = subprocess.Popen(MJPEG_STREAM_CMD)
+                        print(f"🎥 MJPEG-Streamer started! Stream URL: {MJPEG_STREAM_URL}")
+                    except Exception as e:
+                        print(f"❌ Failed to start MJPEG-Streamer: {e}")
+                    lgpio.gpio_write(chip, LED_PIN, 1)
+
+            # Auto-stop after timeout
+            if camera_on and (time.time() - last_seen > AUTO_STOP_DELAY):
+                camera_on = False
+                if mjpeg_process:
+                    try:
+                        mjpeg_process.terminate()
+                        mjpeg_process.wait()
+                        mjpeg_process = None
+                        print("🛑 MJPEG-Streamer stopped (no presence)")
+                    except Exception as e:
+                        print(f"❌ Failed to stop MJPEG-Streamer: {e}")
+                lgpio.gpio_write(chip, LED_PIN, 0)
+
+            time.sleep(SENSOR_POLL_DELAY)
+
+    except KeyboardInterrupt:
+        print("\nExiting sensor loop...")
+    finally:
         sensor.stop_ranging()
         sensor.close()
-    except:
-        pass
-    camera.stop()
-    lgpio.gpio_write(chip, LED_PIN, 0)
-    lgpio.gpiochip_close(chip)
-    print("Cleanup done.")
+        lgpio.gpio_write(chip, LED_PIN, 0)
+        lgpio.gpiochip_close(chip)
+        if mjpeg_process:
+            mjpeg_process.terminate()
+            mjpeg_process.wait()
+        print("Cleaned up GPIO, sensor, and MJPEG-Streamer")
+# ------------------------------------------------
+
+# ---------------- MAIN ------------------
+if __name__ == "__main__":
+    # Run Flask server in a separate thread
+    server_thread = Thread(target=run_server, daemon=True)
+    server_thread.start()
+
+    # Run sensor loop in main thread
+    sensor_loop()
