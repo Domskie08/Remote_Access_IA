@@ -5,6 +5,7 @@ import cv2
 from flask import Flask, Response
 from VL53L0X import VL53L0X
 import socket
+import os
 
 # ---------------- CONFIGURATION ----------------
 LED_PIN = 17
@@ -13,10 +14,14 @@ AUTO_STOP_DELAY = 10    # seconds to turn off camera/LED after no detection
 SENSOR_POLL_DELAY = 0.1
 CAMERA_DEVICE = 0       # /dev/video0
 CAMERA_WIDTH = 1920     # 1080p width
-CAMERA_HEIGHT = 1080    # 1080p height
+CAMERA_HEIGHT = 1080
 CAMERA_FPS = 25
 MJPEG_QUALITY = 90
-FLASK_PORT = 8000
+
+FLASK_PORT = 8443       # HTTPS port
+CERT_DIR = "/home/pi/certs"
+CERT_FILE = os.path.join(CERT_DIR, "mjpeg.crt")
+KEY_FILE = os.path.join(CERT_DIR, "mjpeg.key")
 # ------------------------------------------------
 
 # ---------------- HELPER: AUTO IP ----------------
@@ -24,7 +29,6 @@ def get_local_ip():
     """Returns the Raspberry Pi's local IP address."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        # doesn't need to be reachable
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
     except Exception:
@@ -49,8 +53,7 @@ time.sleep(0.05)
 
 # ---------------- CAMERA CONTROLLER -------------
 class CameraController:
-    """Handles opening and streaming MJPEG frames from a USB camera."""
-    def __init__(self, device=0, width=1920, height=1080, fps=15, quality=90):
+    def __init__(self, device=0, width=1920, height=1080, fps=25, quality=90):
         self.device = device
         self.width = width
         self.height = height
@@ -67,11 +70,9 @@ class CameraController:
             return
 
         self.cap = cv2.VideoCapture(self.device)
-        # set resolution
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self.cap.set(cv2.CAP_PROP_FPS, self.fps)
-        # force MJPEG
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
         if not self.cap.isOpened():
@@ -83,7 +84,7 @@ class CameraController:
         self.thread.start()
 
     def _reader(self):
-        while self.running and self.cap is not None:
+        while self.running and self.cap:
             ret, frame = self.cap.read()
             if not ret:
                 time.sleep(0.01)
@@ -142,7 +143,7 @@ def stream():
 
 @app.route("/")
 def root():
-    return "MJPEG Camera running."
+    return "MJPEG Camera running over HTTPS."
 # ------------------------------------------------
 
 # ---------------- STATE VARIABLES ----------------
@@ -153,12 +154,14 @@ led_on = False
 
 # ---------------- START FLASK SERVER ----------------
 def run_flask():
-    app.run(host="0.0.0.0", port=FLASK_PORT, threaded=True)
+    if not (os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE)):
+        raise RuntimeError(f"Certificate or key file missing! Generate in {CERT_DIR}")
+    app.run(host="0.0.0.0", port=FLASK_PORT, threaded=True,
+            ssl_context=(CERT_FILE, KEY_FILE))
 
 threading.Thread(target=run_flask, daemon=True).start()
-
 pi_ip = get_local_ip()
-print(f"🎥 MJPEG streaming available at http://{pi_ip}:{FLASK_PORT}/stream.mjpg")
+print(f"🎥 MJPEG streaming available at https://{pi_ip}:{FLASK_PORT}/stream.mjpg")
 # ------------------------------------------------
 
 # ---------------- VL53L0X LOOP ----------------
@@ -177,7 +180,6 @@ try:
         else:
             print(f"Distance: {distance} mm")
 
-        # Person detected -> start camera + LED
         if 0 < distance <= THRESHOLD:
             last_seen = time.time()
             if not camera_on:
@@ -192,7 +194,6 @@ try:
             lgpio.gpio_write(chip, LED_PIN, 1)
             led_on = True
 
-        # Auto-stop after timeout -> stop camera + LED
         if (camera_on or led_on) and (time.time() - last_seen > AUTO_STOP_DELAY):
             if camera_on:
                 try:
