@@ -124,6 +124,9 @@ camera = CameraController(
 app = Flask(__name__)
 
 def mjpeg_generator():
+    # Wait until the first frame is available
+    while camera.get_frame() is None:
+        time.sleep(0.01)
     while True:
         frame = camera.get_frame()
         if frame is None:
