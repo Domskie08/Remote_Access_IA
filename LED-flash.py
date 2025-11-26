@@ -124,20 +124,24 @@ camera = CameraController(
 app = Flask(__name__)
 
 def mjpeg_generator():
-    # Wait until the first frame is available
-    while camera.get_frame() is None:
-        time.sleep(0.01)
     while True:
-        frame = camera.get_frame()
-        if frame is None:
+        try:
+            frame = camera.get_frame()
+            if frame is None:
+                time.sleep(0.01)
+                continue
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" +
+                frame +
+                b"\r\n"
+            )
+        except (BrokenPipeError, ConnectionResetError):
+            print("Client disconnected")
+            break
+        except Exception as e:
+            print("MJPEG generator error:", e)
             time.sleep(0.01)
-            continue
-        yield (
-            b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n\r\n" +
-            frame +
-            b"\r\n"
-        )
 
 @app.route("/stream.mjpg")
 def stream():
