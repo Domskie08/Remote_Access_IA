@@ -158,11 +158,17 @@ def api_pi_ip():
 
 # ---------------- START FLASK SERVER ----------------
 def run_flask():
-    app.run(host="0.0.0.0", port=FLASK_PORT, threaded=True)
+    app.run(
+        host="0.0.0.0",
+        port=8080,
+        threaded=True,
+        ssl_context=("cert.pem", "key.pem")  # <-- enable HTTPS
+    )
 
 threading.Thread(target=run_flask, daemon=True).start()
 pi_ip = get_local_ip()
-print(f"🎥 MJPEG streaming at http://{pi_ip}:{FLASK_PORT}/stream.mjpg")
+print(f"🎥 MJPEG streaming available at https://{pi_ip}:8080/stream.mjpg")
+# ------------------------------------------------
 
 # ---------------- WEBSOCKET CLIENT ----------------
 async def ws_loop():
