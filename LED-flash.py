@@ -15,6 +15,9 @@ import threading
 # HARD-CODE DEVICE NAME HERE
 DEVICE_NAME = "device1"
 CENTRAL_WS = "ws://192.168.100.15:8765"      # <--- change to your laptop/server IP
+CERT_DIR = "/home/admin/certs"
+CERT_FILE = os.path.join(CERT_DIR, "mjpeg.crt")
+KEY_FILE = os.path.join(CERT_DIR, "mjpeg.key")
 # -----------------------------------
 
 # ---------------- CONFIGURATION ----------------
@@ -158,19 +161,20 @@ def api_pi_ip():
 
 # ---------------- START FLASK SERVER ----------------
 def run_flask():
+    if not (os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE)):
+        raise RuntimeError(f"Certificate or key file missing! Generate in {CERT_DIR}")
+    
+    # Enable HTTPS
     app.run(
         host="0.0.0.0",
-        port=8080,
+        port=FLASK_PORT,
         threaded=True,
-        ssl_context=(
-            "/home/admin/certs/cert.pem",  # path to your certificate
-            "/home/admin/certs/key.pem"    # path to your private key
-        )
+        ssl_context=(CERT_FILE, KEY_FILE)  # <-- this enables HTTPS
     )
 
 threading.Thread(target=run_flask, daemon=True).start()
 pi_ip = get_local_ip()
-print(f"🎥 MJPEG streaming available at https://{pi_ip}:8080/stream.mjpg")
+print(f"🎥 MJPEG streaming available at https://{pi_ip}:{FLASK_PORT}/stream.mjpg")
 # ------------------------------------------------
 
 # ---------------- WEBSOCKET CLIENT ----------------
