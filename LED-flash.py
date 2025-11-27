@@ -162,7 +162,10 @@ def run_flask():
         host="0.0.0.0",
         port=8080,
         threaded=True,
-        ssl_context=("cert.pem", "key.pem")  # <-- enable HTTPS
+        ssl_context=(
+            "/home/admin/certs/cert.pem",  # path to your certificate
+            "/home/admin/certs/key.pem"    # path to your private key
+        )
     )
 
 threading.Thread(target=run_flask, daemon=True).start()
