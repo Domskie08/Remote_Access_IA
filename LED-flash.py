@@ -7,6 +7,8 @@ import lgpio
 from VL53L0X import VL53L0X
 import json
 import base64
+import os
+import ssl
 
 # ---------------- CONFIG ----------------
 LED_PIN = 17
@@ -18,10 +20,21 @@ CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
 CAMERA_FPS = 15
 DEVICE_NAME = "device1"  # Change per device: device1, device2, etc.
-CENTRAL_SERVER = "ws://192.168.100.15:8765"  # Laptop IP
+
+# Central server info
+CENTRAL_WS = "wss://192.168.100.15:8765"  # laptop/server IP with TLS
+CERT_DIR = "/home/admin/certs"
+CERT_FILE = os.path.join(CERT_DIR, "mjpeg.crt")
+KEY_FILE = os.path.join(CERT_DIR, "mjpeg.key")
 # ----------------------------------------
 
-# GPIO + Sensor setup (unchanged)
+# ---------------- TLS CONFIG ----------------
+ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+ssl_context.check_hostname = False  # skip hostname verification for local LAN
+ssl_context.verify_mode = ssl.CERT_NONE  # skip cert verification if self-signed
+# You could also use: ssl_context.load_verify_locations(CERT_FILE)
+
+# ---------------- GPIO + SENSOR ----------------
 chip = lgpio.gpiochip_open(0)
 lgpio.gpio_claim_output(chip, LED_PIN)
 lgpio.gpio_write(chip, LED_PIN, 0)
@@ -31,7 +44,7 @@ sensor.open()
 sensor.start_ranging()
 time.sleep(0.05)
 
-# Camera setup (unchanged)
+# ---------------- CAMERA ----------------
 class CameraController:
     def __init__(self, device=0, width=1280, height=720, fps=15):
         self.cap = cv2.VideoCapture(device)
@@ -66,11 +79,11 @@ class CameraController:
 
 camera = CameraController(CAMERA_DEVICE, CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS)
 
-# ---------------- WebSocket CLIENT to Central Server ----------------
+# ---------------- WEBSOCKET CLIENT ----------------
 async def connect_to_central():
     while True:
         try:
-            async with websockets.connect(CENTRAL_SERVER) as ws:
+            async with websockets.connect(CENTRAL_WS, ssl=ssl_context) as ws:
                 print(f"✅ Connected to central server as {DEVICE_NAME}")
                 
                 # Register this device
@@ -78,7 +91,7 @@ async def connect_to_central():
                     "type": "register",
                     "device": DEVICE_NAME
                 }))
-                
+
                 # Send frames continuously
                 while True:
                     frame_data = camera.get_frame_bytes()
@@ -89,18 +102,17 @@ async def connect_to_central():
                             "data": frame_data
                         }))
                     await asyncio.sleep(1 / CAMERA_FPS)
-                    
+
         except Exception as e:
             print(f"❌ Connection lost: {e}. Reconnecting in 3s...")
             await asyncio.sleep(3)
 
-# Start WebSocket client in background thread
 def start_ws_client():
     asyncio.run(connect_to_central())
 
 threading.Thread(target=start_ws_client, daemon=True).start()
 
-# ---------------- SENSOR LOOP (unchanged) ----------------
+# ---------------- SENSOR LOOP ----------------
 last_seen = 0
 led_on = False
 
