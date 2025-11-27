@@ -22,7 +22,7 @@ CAMERA_FPS = 15
 DEVICE_NAME = "device1"  # Change per device: device1, device2, etc.
 
 # Central server info
-CENTRAL_WS = "wss://192.168.100.15:8765"  # laptop/server IP with TLS
+CENTRAL_WS = "wss://172.27.44.17:8765"  # laptop/server IP with TLS
 CERT_DIR = "/home/admin/certs"
 CERT_FILE = os.path.join(CERT_DIR, "mjpeg.crt")
 KEY_FILE = os.path.join(CERT_DIR, "mjpeg.key")
