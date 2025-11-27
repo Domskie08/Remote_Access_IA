@@ -1,14 +1,15 @@
+# raspi_device.py
 import asyncio
 import websockets
+import json
+import base64
 import cv2
 import threading
 import time
+import ssl
+import os
 import lgpio
 from VL53L0X import VL53L0X
-import json
-import base64
-import os
-import ssl
 
 # ---------------- CONFIG ----------------
 LED_PIN = 17
@@ -19,20 +20,14 @@ CAMERA_DEVICE = 0
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
 CAMERA_FPS = 15
-DEVICE_NAME = "device1"  # Change per device: device1, device2, etc.
+DEVICE_NAME = "device1"
 
-# Central server info
-CENTRAL_WS = "wss://172.27.44.17:8765"  # laptop/server IP with TLS
-CERT_DIR = "/home/admin/certs"
-CERT_FILE = os.path.join(CERT_DIR, "mjpeg.crt")
-KEY_FILE = os.path.join(CERT_DIR, "mjpeg.key")
-# ----------------------------------------
+CENTRAL_WS = "wss://172.27.44.17:8765"  # your central server IP with TLS
 
 # ---------------- TLS CONFIG ----------------
 ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-ssl_context.check_hostname = False  # skip hostname verification for local LAN
-ssl_context.verify_mode = ssl.CERT_NONE  # skip cert verification if self-signed
-# You could also use: ssl_context.load_verify_locations(CERT_FILE)
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE  # for self-signed certs
 
 # ---------------- GPIO + SENSOR ----------------
 chip = lgpio.gpiochip_open(0)
@@ -86,7 +81,7 @@ async def connect_to_central():
             async with websockets.connect(CENTRAL_WS, ssl=ssl_context) as ws:
                 print(f"✅ Connected to central server as {DEVICE_NAME}")
                 
-                # Register this device
+                # Register device
                 await ws.send(json.dumps({
                     "type": "register",
                     "device": DEVICE_NAME
@@ -127,8 +122,10 @@ try:
             lgpio.gpio_write(chip, LED_PIN, 0)
             led_on = False
         time.sleep(SENSOR_POLL_DELAY)
+
 except KeyboardInterrupt:
     print("Exiting...")
+
 finally:
     sensor.stop_ranging()
     sensor.close()
