@@ -6,35 +6,35 @@ import time
 import lgpio
 from VL53L0X import VL53L0X
 import json
+import base64
 
 # ---------------- CONFIG ----------------
 LED_PIN = 17
-THRESHOLD = 400  # mm
-AUTO_STOP_DELAY = 10
+THRESHOLD = 400        # mm
+AUTO_STOP_DELAY = 10   # seconds
 SENSOR_POLL_DELAY = 0.1
 CAMERA_DEVICE = 0
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
-CAMERA_FPS = 25
-DEVICE_NAME = "device1"  # Hardcoded per device
-
+CAMERA_FPS = 15
+DEVICE_NAME = "device1"  # change per device
 WS_PORT = 8765
 # ----------------------------------------
 
-# GPIO Setup
+# GPIO setup
 chip = lgpio.gpiochip_open(0)
 lgpio.gpio_claim_output(chip, LED_PIN)
 lgpio.gpio_write(chip, LED_PIN, 0)
 
-# Sensor Setup
+# Sensor setup
 sensor = VL53L0X()
 sensor.open()
 sensor.start_ranging()
 time.sleep(0.05)
 
-# Camera Controller
+# Camera setup
 class CameraController:
-    def __init__(self, device=0, width=1280, height=720, fps=25):
+    def __init__(self, device=0, width=1280, height=720, fps=15):
         self.cap = cv2.VideoCapture(device)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
@@ -59,7 +59,7 @@ class CameraController:
             ret, jpeg = cv2.imencode(".jpg", self.frame)
             if not ret:
                 return None
-            return jpeg.tobytes()
+            return base64.b64encode(jpeg.tobytes()).decode("utf-8")
 
     def stop(self):
         self.running = False
@@ -71,21 +71,20 @@ camera = CameraController(CAMERA_DEVICE, CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS
 connected_frontends = set()
 
 async def ws_handler(ws, path):
-    print("Frontend connected")
+    print(f"Frontend connected to {DEVICE_NAME}")
     connected_frontends.add(ws)
 
-    # Register device name on connection
-    await ws.send(json.dumps({"type": "stream_url", "device": DEVICE_NAME}))
+    # Send registration info
+    await ws.send(json.dumps({"type": "register", "device": DEVICE_NAME}))
 
     try:
         while True:
-            frame = camera.get_frame_bytes()
-            if frame:
-                # Send JPEG as base64
+            frame_data = camera.get_frame_bytes()
+            if frame_data:
                 await ws.send(json.dumps({
                     "type": "frame",
                     "device": DEVICE_NAME,
-                    "data": frame.hex()  # can also use base64 if preferred
+                    "data": frame_data
                 }))
             await asyncio.sleep(1 / CAMERA_FPS)
     except websockets.exceptions.ConnectionClosed:
@@ -93,16 +92,18 @@ async def ws_handler(ws, path):
     finally:
         connected_frontends.discard(ws)
 
-async def main():
-    server = await websockets.serve(ws_handler, "0.0.0.0", WS_PORT)
-    print(f"🚀 Device {DEVICE_NAME} WebSocket server running on ws://0.0.0.0:{WS_PORT}")
-    await server.wait_closed()
-
-# ---------------- Sensor Loop ----------------
+# ---------------- SENSOR LOOP ----------------
 last_seen = 0
 led_on = False
+
+async def start_ws_server():
+    server = await websockets.serve(ws_handler, "0.0.0.0", WS_PORT)
+    print(f"🚀 Device {DEVICE_NAME} WS server running on ws://0.0.0.0:{WS_PORT}")
+    await server.wait_closed()
+
+threading.Thread(target=lambda: asyncio.run(start_ws_server()), daemon=True).start()
+
 try:
-    threading.Thread(target=lambda: asyncio.run(main()), daemon=True).start()
     while True:
         distance = sensor.get_distance()
         if 0 < distance <= THRESHOLD:
@@ -113,7 +114,6 @@ try:
             lgpio.gpio_write(chip, LED_PIN, 0)
             led_on = False
         time.sleep(SENSOR_POLL_DELAY)
-
 except KeyboardInterrupt:
     print("Exiting...")
 finally:
