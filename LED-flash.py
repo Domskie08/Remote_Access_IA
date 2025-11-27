@@ -10,29 +10,28 @@ import base64
 
 # ---------------- CONFIG ----------------
 LED_PIN = 17
-THRESHOLD = 400        # mm
-AUTO_STOP_DELAY = 10   # seconds
+THRESHOLD = 400
+AUTO_STOP_DELAY = 10
 SENSOR_POLL_DELAY = 0.1
 CAMERA_DEVICE = 0
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
 CAMERA_FPS = 15
-DEVICE_NAME = "device1"  # change per device
-WS_PORT = 8765
+DEVICE_NAME = "device1"  # Change per device: device1, device2, etc.
+CENTRAL_SERVER = "ws://192.168.100.15:8765"  # Laptop IP
 # ----------------------------------------
 
-# GPIO setup
+# GPIO + Sensor setup (unchanged)
 chip = lgpio.gpiochip_open(0)
 lgpio.gpio_claim_output(chip, LED_PIN)
 lgpio.gpio_write(chip, LED_PIN, 0)
 
-# Sensor setup
 sensor = VL53L0X()
 sensor.open()
 sensor.start_ranging()
 time.sleep(0.05)
 
-# Camera setup
+# Camera setup (unchanged)
 class CameraController:
     def __init__(self, device=0, width=1280, height=720, fps=15):
         self.cap = cv2.VideoCapture(device)
@@ -56,7 +55,7 @@ class CameraController:
         with self.lock:
             if self.frame is None:
                 return None
-            ret, jpeg = cv2.imencode(".jpg", self.frame)
+            ret, jpeg = cv2.imencode(".jpg", self.frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             if not ret:
                 return None
             return base64.b64encode(jpeg.tobytes()).decode("utf-8")
@@ -67,41 +66,43 @@ class CameraController:
 
 camera = CameraController(CAMERA_DEVICE, CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS)
 
-# ---------------- WebSocket Server ----------------
-connected_frontends = set()
-
-async def ws_handler(ws, path):
-    print(f"Frontend connected to {DEVICE_NAME}")
-    connected_frontends.add(ws)
-
-    # Send registration info
-    await ws.send(json.dumps({"type": "register", "device": DEVICE_NAME}))
-
-    try:
-        while True:
-            frame_data = camera.get_frame_bytes()
-            if frame_data:
+# ---------------- WebSocket CLIENT to Central Server ----------------
+async def connect_to_central():
+    while True:
+        try:
+            async with websockets.connect(CENTRAL_SERVER) as ws:
+                print(f"✅ Connected to central server as {DEVICE_NAME}")
+                
+                # Register this device
                 await ws.send(json.dumps({
-                    "type": "frame",
-                    "device": DEVICE_NAME,
-                    "data": frame_data
+                    "type": "register",
+                    "device": DEVICE_NAME
                 }))
-            await asyncio.sleep(1 / CAMERA_FPS)
-    except websockets.exceptions.ConnectionClosed:
-        print("Frontend disconnected")
-    finally:
-        connected_frontends.discard(ws)
+                
+                # Send frames continuously
+                while True:
+                    frame_data = camera.get_frame_bytes()
+                    if frame_data:
+                        await ws.send(json.dumps({
+                            "type": "frame",
+                            "device": DEVICE_NAME,
+                            "data": frame_data
+                        }))
+                    await asyncio.sleep(1 / CAMERA_FPS)
+                    
+        except Exception as e:
+            print(f"❌ Connection lost: {e}. Reconnecting in 3s...")
+            await asyncio.sleep(3)
 
-# ---------------- SENSOR LOOP ----------------
+# Start WebSocket client in background thread
+def start_ws_client():
+    asyncio.run(connect_to_central())
+
+threading.Thread(target=start_ws_client, daemon=True).start()
+
+# ---------------- SENSOR LOOP (unchanged) ----------------
 last_seen = 0
 led_on = False
-
-async def start_ws_server():
-    server = await websockets.serve(ws_handler, "0.0.0.0", WS_PORT)
-    print(f"🚀 Device {DEVICE_NAME} WS server running on ws://0.0.0.0:{WS_PORT}")
-    await server.wait_closed()
-
-threading.Thread(target=lambda: asyncio.run(start_ws_server()), daemon=True).start()
 
 try:
     while True:
