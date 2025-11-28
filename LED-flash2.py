@@ -9,6 +9,7 @@ from tkinter import messagebox
 
 # ---------------- CONFIGURATION ----------------
 LED_PIN = 17
+PORT = "4173"
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 THRESHOLD = 400
@@ -25,22 +26,20 @@ SERVER_URL = ""
 DEVICE_NAME = ""
 # ------------------------------------------------
 
-
 def start_program():
     """Triggered after user presses Enter on GUI"""
     global WEB_URL, SERVER_URL, DEVICE_NAME
 
-    WEB_URL = url_entry.get().strip()
+    ip_input = ip_entry.get().strip()
     DEVICE_NAME = device_entry.get().strip()
 
-    if WEB_URL.endswith("/"):
-        SERVER_URL = WEB_URL + "api/camera"
-    else:
-        SERVER_URL = WEB_URL + "/api/camera"
-
-    if not WEB_URL or not DEVICE_NAME:
-        messagebox.showerror("Error", "Please enter both URL and Device Name.")
+    if not ip_input or not DEVICE_NAME:
+        messagebox.showerror("Error", "Please enter both IP and Device Name.")
         return
+
+    # Build URLs automatically
+    WEB_URL = f"https://{ip_input}:{PORT}/"
+    SERVER_URL = WEB_URL + "api/camera"
 
     print(f"WEB_URL: {WEB_URL}")
     print(f"SERVER_URL: {SERVER_URL}")
@@ -145,18 +144,17 @@ def start_sensor_loop():
 # ---------------- GUI SETUP ----------------
 root = tk.Tk()
 root.title("Sensor Configuration")
-root.geometry("400x200")
+root.geometry("400x180")
 
-tk.Label(root, text="Enter Web URL (example: https://172.27.44.17:4173)").pack(pady=5)
-url_entry = tk.Entry(root, width=40)
-url_entry.pack()
+tk.Label(root, text="Enter Server IP (example: 172.27.44.17)").pack(pady=5)
+ip_entry = tk.Entry(root, width=30)
+ip_entry.pack()
 
 tk.Label(root, text="Enter Device Name (example: device1)").pack(pady=5)
-device_entry = tk.Entry(root, width=40)
+device_entry = tk.Entry(root, width=30)
 device_entry.pack()
 
 start_button = tk.Button(root, text="ENTER", command=start_program, width=20)
 start_button.pack(pady=20)
 
 root.mainloop()
-# ------------------------------------------------
