@@ -51,7 +51,7 @@ def start_program():
     # Open Chromium in kiosk mode
     print("Launching Chromium kiosk...")
     subprocess.Popen([
-        "chromium-browser",
+        "/usr/bin/chromium",
         "--kiosk",
         "--noerrdialogs",
         "--disable-infobars",
