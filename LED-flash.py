@@ -8,7 +8,7 @@ from VL53L0X import VL53L0X
 LED_PIN = 17
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-SERVER_URL = "http://localhost:4173/api/camera"
+SERVER_URL = "https://172.27.44.17:4173/api/camera"
 DEVICE_NAME = "device1"  # Change per Raspberry Pi
 
 THRESHOLD = 400
