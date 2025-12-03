@@ -9,7 +9,7 @@ Hardware Setup:
 - GPIO 27: LED indicator (optional status LED)
 
 Requirements:
-- pip3 install sseclient-py requests lgpio
+- pip3 install requests lgpio
 """
 
 import time
@@ -17,8 +17,6 @@ import json
 import requests
 import lgpio
 import subprocess
-import tkinter as tk
-from tkinter import messagebox
 import threading
 import urllib3
 
@@ -30,12 +28,12 @@ SOLENOID_PIN = 17       # GPIO pin for solenoid relay
 LED_PIN = 27            # GPIO pin for status LED (optional)
 PORT = "5173"           # SvelteKit dev port (use 4173 for preview)
 UNLOCK_DURATION = 3     # Seconds to keep solenoid energized
+WEB_URL = f"https://localhost:{PORT}/"
+SSE_URL = f"https://localhost:{PORT}/api/turnstile"
+DEVICE_NAME = "device1"  # Default device name
 # ------------------------------------------------
 
 # ---------------- GLOBAL VARIABLES --------------
-WEB_URL = ""
-SSE_URL = ""
-DEVICE_NAME = ""
 chip = None
 sse_thread = None
 running = False
@@ -163,26 +161,12 @@ def handle_sse_event(data):
 
 
 def start_program():
-    """Triggered after user presses Enter on GUI"""
-    global WEB_URL, SSE_URL, DEVICE_NAME, running, sse_thread
-    
-    ip_input = ip_entry.get().strip()
-    DEVICE_NAME = device_entry.get().strip()
-    
-    if not ip_input or not DEVICE_NAME:
-        messagebox.showerror("Error", "Please enter both IP and Device Name.")
-        return
-    
-    # Build URLs automatically
-    WEB_URL = f"https://{ip_input}:{PORT}/"
-    SSE_URL = f"https://{ip_input}:{PORT}/api/turnstile"
+    """Start the turnstile controller"""
+    global running, sse_thread
     
     print(f"📍 WEB_URL: {WEB_URL}")
     print(f"📡 SSE_URL: {SSE_URL}")
     print(f"🏷️ DEVICE_NAME: {DEVICE_NAME}")
-    
-    # Close GUI window
-    root.destroy()
     
     # Initialize GPIO
     gpio_setup()
@@ -219,55 +203,5 @@ def start_program():
         gpio_cleanup()
 
 
-# ---------------- GUI SETUP ----------------
-root = tk.Tk()
-root.title("Turnstile Controller Configuration")
-root.geometry("450x220")
-root.configure(bg='#f4efea')
-
-# Title
-tk.Label(
-    root, 
-    text="TURNSTILE CONTROLLER", 
-    font=('JetBrains Mono', 16, 'bold'),
-    bg='#f4efea',
-    fg='#383838'
-).pack(pady=10)
-
-# IP Entry
-tk.Label(
-    root, 
-    text="Server IP (e.g., 192.168.1.100)", 
-    font=('JetBrains Mono', 10),
-    bg='#f4efea'
-).pack()
-ip_entry = tk.Entry(root, width=35, font=('JetBrains Mono', 12))
-ip_entry.pack(pady=5)
-ip_entry.insert(0, "localhost")
-
-# Device Name Entry
-tk.Label(
-    root, 
-    text="Device Name (e.g., device1)", 
-    font=('JetBrains Mono', 10),
-    bg='#f4efea'
-).pack()
-device_entry = tk.Entry(root, width=35, font=('JetBrains Mono', 12))
-device_entry.pack(pady=5)
-device_entry.insert(0, "device1")
-
-# Start Button
-start_button = tk.Button(
-    root, 
-    text="START CONTROLLER", 
-    command=start_program, 
-    width=25,
-    font=('JetBrains Mono', 12, 'bold'),
-    bg='#34c759',
-    fg='white',
-    activebackground='#28a745'
-)
-start_button.pack(pady=20)
-
-# Run GUI
-root.mainloop()
+if __name__ == "__main__":
+    start_program()
