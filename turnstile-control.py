@@ -172,7 +172,7 @@ def start_program():
     gpio_setup()
     
     # Open Chromium in kiosk mode
-    """print("🌐 Launching Chromium kiosk...")
+    print("🌐 Launching Chromium kiosk...")
     subprocess.Popen([
         "/usr/bin/chromium",
         "--kiosk",
@@ -181,7 +181,7 @@ def start_program():
         "--incognito",
         "--ignore-certificate-errors",
         WEB_URL
-    ])"""
+    ])
     
     # Start SSE listener
     running = True
