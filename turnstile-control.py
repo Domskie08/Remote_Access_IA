@@ -43,6 +43,14 @@ running = False
 def gpio_setup():
     """Initialize GPIO pins"""
     global chip
+
+    # Set HID device permissions for barcode scanner
+    try:
+        subprocess.run(['sudo', 'chmod', '666', '/dev/hidraw*'], check=False)
+        print("✅ HID device permissions set")
+    except Exception as e:
+        print(f"⚠️ Failed to set HID permissions: {e}")
+        
     chip = lgpio.gpiochip_open(0)
     lgpio.gpio_claim_output(chip, SOLENOID_PIN)
     lgpio.gpio_claim_output(chip, LED_PIN)
