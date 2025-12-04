@@ -285,8 +285,8 @@ def start_program():
     if not wait_for_scanner():
         print("⚠️ Continuing without scanner detection...")
 
-    # Open Chromium in kiosk mode
-    print("🌐 Launching Chromium kiosk...")
+    # Open Chromium in kiosk mode with auto-permissions
+    print("🌐 Launching Chromium kiosk with auto-permissions...")
     subprocess.Popen([
         "/usr/bin/chromium",
         "--kiosk",
@@ -294,6 +294,20 @@ def start_program():
         "--disable-infobars",
         "--incognito",
         "--ignore-certificate-errors",
+        # Auto-grant camera and microphone permissions
+        "--use-fake-ui-for-media-stream",
+        # Enable WebHID API
+        "--enable-features=WebHID",
+        # Disable permission prompts
+        "--disable-features=TranslateUI",
+        "--disable-popup-blocking",
+        "--autoplay-policy=no-user-gesture-required",
+        # Performance optimizations for Raspberry Pi
+        "--disable-gpu",
+        "--disable-software-rasterizer",
+        "--disable-dev-shm-usage",
+        # Allow insecure localhost for self-signed certs
+        "--allow-insecure-localhost",
         WEB_URL
     ])
 
