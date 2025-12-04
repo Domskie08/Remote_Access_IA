@@ -7,9 +7,12 @@ Connects to SvelteKit SSE endpoint and controls solenoid via GPIO
 Hardware Setup:
 - GPIO 17: Solenoid relay (unlock turnstile)
 - GPIO 27: LED indicator (optional status LED)
+- Yuriot Scan Box: USB QR/Barcode scanner (auto-detected)
 
 Requirements:
 - pip3 install requests lgpio
+- Run with sudo: sudo python3 turnstile-controller.py
+- Connect Yuriot Scan Box scanner before starting
 """
 
 import time
@@ -19,6 +22,8 @@ import lgpio
 import subprocess
 import threading
 import urllib3
+import glob
+import os
 
 # Disable SSL warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -40,8 +45,59 @@ running = False
 # ------------------------------------------------
 
 
+def wait_for_scanner():
+    """Wait for Yuriot Scan Box scanner to be connected"""
+    print("🔍 Looking for Yuriot Scan Box scanner...")
+
+    max_attempts = 30  # Wait up to 30 seconds
+    attempt = 0
+
+    while attempt < max_attempts:
+        try:
+            # Check if scanner is connected via lsusb
+            result = subprocess.run(['lsusb'], capture_output=True, text=True, timeout=5)
+            if 'Yuriot' in result.stdout or 'Scan Box' in result.stdout:
+                print("✅ Yuriot Scan Box scanner detected via lsusb!")
+                return True
+
+            # Check recent kernel messages for USB connections
+            dmesg_result = subprocess.run(['dmesg', '--time-format=iso', '--since=-30seconds'],
+                                        capture_output=True, text=True, timeout=5)
+            if 'Yuriot' in dmesg_result.stdout or 'Scan Box' in dmesg_result.stdout:
+                print("✅ Yuriot Scan Box scanner detected in recent logs!")
+                return True
+
+            # Alternative: Check HID devices
+            hid_devices = glob.glob('/dev/hidraw*')
+            if hid_devices:
+                # Check device names in /sys/class/hidraw
+                for device in hid_devices:
+                    try:
+                        device_name_path = f"/sys/class/hidraw/{os.path.basename(device)}/device/uevent"
+                        if os.path.exists(device_name_path):
+                            with open(device_name_path, 'r') as f:
+                                uevent_content = f.read()
+                                if 'Yuriot' in uevent_content or 'Scan Box' in uevent_content:
+                                    print("✅ Yuriot Scan Box scanner detected via HID!")
+                                    return True
+                    except:
+                        continue
+
+        except Exception as e:
+            print(f"⚠️ Error checking for scanner: {e}")
+
+        attempt += 1
+        if attempt < max_attempts:
+            print(f"⏳ Waiting for scanner... ({attempt}/{max_attempts})")
+            time.sleep(1)
+
+    print("❌ Yuriot Scan Box scanner not found within timeout")
+    print("💡 Make sure the scanner is connected and powered on")
+    return False
+
+
 def gpio_setup():
-    """Initialize GPIO pins"""
+    """Initialize GPIO pins and set HID device permissions"""
     global chip
 
     # Set HID device permissions for barcode scanner
@@ -50,7 +106,7 @@ def gpio_setup():
         print("✅ HID device permissions set")
     except Exception as e:
         print(f"⚠️ Failed to set HID permissions: {e}")
-        
+
     chip = lgpio.gpiochip_open(0)
     lgpio.gpio_claim_output(chip, SOLENOID_PIN)
     lgpio.gpio_claim_output(chip, LED_PIN)
@@ -90,25 +146,25 @@ def lock_turnstile():
 def sse_listener():
     """Listen to SSE events from SvelteKit server"""
     global running
-    
+
     print(f"📡 Connecting to SSE: {SSE_URL}")
-    
+
     while running:
         try:
             # Use requests with stream=True for SSE
             response = requests.get(SSE_URL, stream=True, verify=False, timeout=60)
-            
+
             for line in response.iter_lines():
                 if not running:
                     break
-                    
+
                 if line:
                     line_str = line.decode('utf-8')
-                    
+
                     # Skip heartbeat comments
                     if line_str.startswith(':'):
                         continue
-                    
+
                     # Parse SSE data
                     if line_str.startswith('data:'):
                         data_str = line_str[5:].strip()
@@ -117,7 +173,7 @@ def sse_listener():
                             handle_sse_event(data)
                         except json.JSONDecodeError:
                             print(f"⚠️ Invalid JSON: {data_str}")
-                            
+
         except requests.exceptions.Timeout:
             print("⏱️ SSE connection timeout, reconnecting...")
         except requests.exceptions.ConnectionError as e:
@@ -134,30 +190,30 @@ def handle_sse_event(data):
     event = data.get('event')
     device = data.get('device', 'all')
     my_device = DEVICE_NAME
-    
+
     # Only react if message is for this device or for "all"
     if device != my_device and device != 'all':
         print(f"📡 Ignoring event for {device} (I am {my_device})")
         return
-    
+
     print(f"📨 Event received: {event} | Device: {device}")
-    
+
     if event == 'connected':
         print("✅ SSE Connected to server!")
         lgpio.gpio_write(chip, LED_PIN, 1)
         time.sleep(0.2)
         lgpio.gpio_write(chip, LED_PIN, 0)
-        
+
     elif event == 'unlock' or event == 'verified':
         student_name = data.get('studentName')
         student_id = data.get('studentId')
         print(f"✅ VERIFIED: {student_name} ({student_id})")
         # Run unlock in separate thread to not block SSE listener
         threading.Thread(target=unlock_turnstile, args=(student_name,)).start()
-        
+
     elif event == 'lock':
         lock_turnstile()
-        
+
     elif event == 'failed':
         print("❌ Verification failed")
         # Blink LED to indicate failure
@@ -171,14 +227,18 @@ def handle_sse_event(data):
 def start_program():
     """Start the turnstile controller"""
     global running, sse_thread
-    
+
     print(f"📍 WEB_URL: {WEB_URL}")
     print(f"📡 SSE_URL: {SSE_URL}")
     print(f"🏷️ DEVICE_NAME: {DEVICE_NAME}")
-    
+
     # Initialize GPIO
     gpio_setup()
-    
+
+    # Wait for Yuriot Scan Box scanner
+    if not wait_for_scanner():
+        print("⚠️ Continuing without scanner detection...")
+
     # Open Chromium in kiosk mode
     print("🌐 Launching Chromium kiosk...")
     subprocess.Popen([
@@ -190,16 +250,18 @@ def start_program():
         "--ignore-certificate-errors",
         WEB_URL
     ])
-    
+
     # Start SSE listener
     running = True
     sse_thread = threading.Thread(target=sse_listener, daemon=True)
     sse_thread.start()
-    
+
     print("🚀 Turnstile controller started!")
     print("📡 Listening for SSE events...")
+    print("💡 Make sure to run with sudo for HID device access: sudo python3 turnstile-controller.py")
+    print("🔍 Yuriot Scan Box scanner should be connected and detected")
     print("Press Ctrl+C to exit")
-    
+
     # Keep main thread alive
     try:
         while running:
