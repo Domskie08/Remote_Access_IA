@@ -97,15 +97,8 @@ def wait_for_scanner():
 
 
 def gpio_setup():
-    """Initialize GPIO pins and set HID device permissions"""
+    """Initialize GPIO pins"""
     global chip
-
-    # Set HID device permissions for barcode scanner
-    try:
-        subprocess.run('sudo chmod 666 /dev/hidraw*', shell=True, check=False)
-        print("✅ HID device permissions set")
-    except Exception as e:
-        print(f"⚠️ Failed to set HID permissions: {e}")
 
     chip = lgpio.gpiochip_open(0)
     lgpio.gpio_claim_output(chip, SOLENOID_PIN)
@@ -232,10 +225,18 @@ def start_program():
     print(f"📡 SSE_URL: {SSE_URL}")
     print(f"🏷️ DEVICE_NAME: {DEVICE_NAME}")
 
+    # Set HID permissions first
+    print("🔧 Setting HID device permissions...")
+    try:
+        subprocess.run('sudo chmod 666 /dev/hidraw*', shell=True, check=False)
+        print("✅ HID device permissions set")
+    except Exception as e:
+        print(f"⚠️ Failed to set HID permissions: {e}")
+
     # Initialize GPIO
     gpio_setup()
 
-    # Wait for Yuriot Scan Box scanner
+    # Now wait for Yuriot Scan Box scanner to connect
     if not wait_for_scanner():
         print("⚠️ Continuing without scanner detection...")
 
