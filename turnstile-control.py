@@ -28,8 +28,8 @@ SOLENOID_PIN = 17       # GPIO pin for solenoid relay
 LED_PIN = 27            # GPIO pin for status LED (optional)
 PORT = "5173"           # SvelteKit dev port (use 4173 for preview)
 UNLOCK_DURATION = 3     # Seconds to keep solenoid energized
-WEB_URL = f"http://172.27.44.17:{PORT}/"
-SSE_URL = f"http://172.27.44.17:{PORT}/api/turnstile"
+WEB_URL = f"https://172.27.44.17:{PORT}/"
+SSE_URL = f"https://172.27.44.17:{PORT}/api/turnstile"
 DEVICE_NAME = "device1"  # Default device name
 # ------------------------------------------------
 
@@ -172,16 +172,16 @@ def start_program():
     gpio_setup()
     
     # Open Chromium in kiosk mode
-    print("🌐 Launching Chromium kiosk...")
+    """print("🌐 Launching Chromium kiosk...")
     subprocess.Popen([
         "/usr/bin/chromium",
         "--kiosk",
         "--noerrdialogs",
-        #"--disable-infobars",
+        "--disable-infobars",
         "--incognito",
         "--ignore-certificate-errors",
         WEB_URL
-    ])
+    ])"""
     
     # Start SSE listener
     running = True
