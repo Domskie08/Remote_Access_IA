@@ -7,12 +7,13 @@ Connects to SvelteKit SSE endpoint and controls solenoid via GPIO
 Hardware Setup:
 - GPIO 17: Solenoid relay (unlock turnstile)
 - GPIO 27: LED indicator (optional status LED)
-- Yuriot Scan Box: USB QR/Barcode scanner (auto-detected)
+- Yuriot ScanCode Box: USB QR/Barcode scanner (auto-detected)
 
 Requirements:
 - pip3 install requests lgpio
 - Run with sudo: sudo python3 turnstile-controller.py
-- Connect Yuriot Scan Box scanner before starting
+- Connect Yuriot ScanCode Box scanner before starting
+- Test scanner: sudo python3 turnstile-controller.py test
 """
 
 import time
@@ -46,8 +47,8 @@ running = False
 
 
 def wait_for_scanner():
-    """Wait for Yuriot Scan Box scanner to be connected"""
-    print("🔍 Looking for Yuriot Scan Box scanner...")
+    """Wait for Yuriot ScanCode Box scanner to be connected"""
+    print("🔍 Looking for Yuriot ScanCode Box scanner...")
 
     max_attempts = 30  # Wait up to 30 seconds
     attempt = 0
@@ -56,31 +57,73 @@ def wait_for_scanner():
         try:
             # Check if scanner is connected via lsusb
             result = subprocess.run(['lsusb'], capture_output=True, text=True, timeout=5)
-            if 'Yuriot' in result.stdout or 'Scan Box' in result.stdout:
-                print("✅ Yuriot Scan Box scanner detected via lsusb!")
+            print(f"🔍 lsusb output: {result.stdout[:200]}...")  # Debug: show first 200 chars
+
+            # Check for various possible names
+            scanner_names = ['Yuriot', 'YuRiot', 'ScanCode Box', 'Scan Box', 'Barcode', 'Scanner']
+            detected = False
+            for name in scanner_names:
+                if name.lower() in result.stdout.lower():
+                    print(f"✅ Scanner detected via lsusb: {name}")
+                    detected = True
+                    break
+
+            if detected:
                 return True
 
             # Check recent kernel messages for USB connections
             dmesg_result = subprocess.run(['dmesg', '--time-format=iso', '--since=-30seconds'],
                                         capture_output=True, text=True, timeout=5)
-            if 'Yuriot' in dmesg_result.stdout or 'Scan Box' in dmesg_result.stdout:
-                print("✅ Yuriot Scan Box scanner detected in recent logs!")
-                return True
+            print(f"🔍 Recent dmesg: {dmesg_result.stdout[-200:]}...")  # Debug: show last 200 chars
 
-            # Alternative: Check HID devices
+            for name in scanner_names:
+                if name.lower() in dmesg_result.stdout.lower():
+                    print(f"✅ Scanner detected in logs: {name}")
+                    return True
+
+            # Check HID devices and their details
             hid_devices = glob.glob('/dev/hidraw*')
+            print(f"🔍 Found HID devices: {hid_devices}")
+
             if hid_devices:
-                # Check device names in /sys/class/hidraw
                 for device in hid_devices:
                     try:
+                        # Check device name
                         device_name_path = f"/sys/class/hidraw/{os.path.basename(device)}/device/uevent"
                         if os.path.exists(device_name_path):
                             with open(device_name_path, 'r') as f:
                                 uevent_content = f.read()
-                                if 'Yuriot' in uevent_content or 'Scan Box' in uevent_content:
-                                    print("✅ Yuriot Scan Box scanner detected via HID!")
-                                    return True
-                    except:
+                                print(f"🔍 HID device {device}: {uevent_content[:100]}...")
+
+                                for name in scanner_names:
+                                    if name.lower() in uevent_content.lower():
+                                        print(f"✅ Scanner detected via HID: {name}")
+                                        return True
+
+                        # Check manufacturer and product
+                        manufacturer_path = f"/sys/class/hidraw/{os.path.basename(device)}/device/manufacturer"
+                        product_path = f"/sys/class/hidraw/{os.path.basename(device)}/device/product"
+
+                        manufacturer = ""
+                        product = ""
+
+                        if os.path.exists(manufacturer_path):
+                            with open(manufacturer_path, 'r') as f:
+                                manufacturer = f.read().strip()
+                        if os.path.exists(product_path):
+                            with open(product_path, 'r') as f:
+                                product = f.read().strip()
+
+                        print(f"🔍 HID {device} - Manufacturer: '{manufacturer}', Product: '{product}'")
+
+                        # Check if this looks like a scanner
+                        scanner_keywords = ['yuriot', 'scan', 'barcode', 'scanner', 'reader']
+                        if any(keyword in (manufacturer + product).lower() for keyword in scanner_keywords):
+                            print(f"✅ Scanner detected by keywords: {manufacturer} {product}")
+                            return True
+
+                    except Exception as e:
+                        print(f"⚠️ Error checking HID device {device}: {e}")
                         continue
 
         except Exception as e:
@@ -91,8 +134,10 @@ def wait_for_scanner():
             print(f"⏳ Waiting for scanner... ({attempt}/{max_attempts})")
             time.sleep(1)
 
-    print("❌ Yuriot Scan Box scanner not found within timeout")
+    print("❌ Yuriot ScanCode Box scanner not found within timeout")
     print("💡 Make sure the scanner is connected and powered on")
+    print("💡 Try running: lsusb | grep -i scan")
+    print("💡 Or check: ls -la /dev/hidraw*")
     return False
 
 
@@ -236,7 +281,7 @@ def start_program():
     # Initialize GPIO
     gpio_setup()
 
-    # Now wait for Yuriot Scan Box scanner to connect
+    # Now wait for Yuriot ScanCode Box scanner to connect
     if not wait_for_scanner():
         print("⚠️ Continuing without scanner detection...")
 
@@ -260,7 +305,7 @@ def start_program():
     print("🚀 Turnstile controller started!")
     print("📡 Listening for SSE events...")
     print("💡 Make sure to run with sudo for HID device access: sudo python3 turnstile-controller.py")
-    print("🔍 Yuriot Scan Box scanner should be connected and detected")
+    print("🔍 Yuriot ScanCode Box scanner should be connected and detected")
     print("Press Ctrl+C to exit")
 
     # Keep main thread alive
@@ -274,5 +319,59 @@ def start_program():
         gpio_cleanup()
 
 
+def test_scanner_detection():
+    """Test function to debug scanner detection"""
+    print("🧪 Testing scanner detection...")
+
+    print("\n1. Checking lsusb:")
+    try:
+        result = subprocess.run(['lsusb'], capture_output=True, text=True, timeout=5)
+        print(result.stdout)
+    except Exception as e:
+        print(f"Error: {e}")
+
+    print("\n2. Checking HID devices:")
+    try:
+        hid_devices = glob.glob('/dev/hidraw*')
+        print(f"HID devices: {hid_devices}")
+
+        for device in hid_devices:
+            try:
+                manufacturer_path = f"/sys/class/hidraw/{os.path.basename(device)}/device/manufacturer"
+                product_path = f"/sys/class/hidraw/{os.path.basename(device)}/device/product"
+
+                manufacturer = "Unknown"
+                product = "Unknown"
+
+                if os.path.exists(manufacturer_path):
+                    with open(manufacturer_path, 'r') as f:
+                        manufacturer = f.read().strip()
+                if os.path.exists(product_path):
+                    with open(product_path, 'r') as f:
+                        product = f.read().strip()
+
+                print(f"  {device}: {manufacturer} - {product}")
+            except Exception as e:
+                print(f"  {device}: Error reading info - {e}")
+    except Exception as e:
+        print(f"Error checking HID devices: {e}")
+
+    print("\n3. Checking recent dmesg:")
+    try:
+        result = subprocess.run(['dmesg', '--time-format=iso', '--since=-60seconds'],
+                              capture_output=True, text=True, timeout=5)
+        # Filter for USB-related messages
+        usb_lines = [line for line in result.stdout.split('\n') if 'usb' in line.lower() or 'hid' in line.lower()]
+        for line in usb_lines[-10:]:  # Show last 10 USB/HID related lines
+            print(f"  {line}")
+    except Exception as e:
+        print(f"Error checking dmesg: {e}")
+
+
+# Allow running test function
 if __name__ == "__main__":
-    start_program()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
+        test_scanner_detection()
+    else:
+        start_program()
