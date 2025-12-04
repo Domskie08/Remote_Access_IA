@@ -177,7 +177,7 @@ def start_program():
         "/usr/bin/chromium",
         "--kiosk",
         "--noerrdialogs",
-        "--disable-infobars",
+        #"--disable-infobars",
         "--incognito",
         "--ignore-certificate-errors",
         WEB_URL
