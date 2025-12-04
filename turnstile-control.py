@@ -46,7 +46,7 @@ def gpio_setup():
 
     # Set HID device permissions for barcode scanner
     try:
-        subprocess.run(['sudo', 'chmod', '666', '/dev/hidraw*'], check=False)
+        subprocess.run('sudo chmod 666 /dev/hidraw*', shell=True, check=False)
         print("✅ HID device permissions set")
     except Exception as e:
         print(f"⚠️ Failed to set HID permissions: {e}")
