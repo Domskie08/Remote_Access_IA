@@ -12,7 +12,7 @@ LED_PIN = 17
 PORT = "4173"
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-THRESHOLD = 400
+THRESHOLD = 600
 AUTO_STOP_DELAY = 10
 SENSOR_POLL_DELAY = 0.1
 
