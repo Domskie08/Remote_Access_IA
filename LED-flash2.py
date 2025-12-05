@@ -55,7 +55,10 @@ def start_program():
         "--kiosk",
         "--noerrdialogs",
         "--disable-infobars",
+        "--ignore-certificate-errors",
+        "--ignore-ssl-errors",
         "--incognito",
+        "--ignore-ssl-errors-ignore-untrusted",
         WEB_URL
     ])
 
