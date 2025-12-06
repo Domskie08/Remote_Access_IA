@@ -4,7 +4,7 @@
 # -----------------------------------------
 
 # Path to your project folder
-PROJECT_DIR="/home/pi/Remote_Access_IA"
+PROJECT_DIR="/home/admin/Remote_Access_IA"
 
 # Activate virtual environment inside project folder
 source "$PROJECT_DIR/venv/bin/activate"
