@@ -61,7 +61,6 @@ def start_program():
         "--ignore-ssl-errors-ignore-untrusted",
         "--use-fake-ui-for-media-stream",  # Auto-grant camera/microphone permissions
         "--autoplay-policy=no-user-gesture-required",  # Allow autoplay
-        "--disable-popup-blocking",  # Prevent popups
         WEB_URL
     ])
 
