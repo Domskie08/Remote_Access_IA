@@ -58,9 +58,6 @@ def start_program():
         "--ignore-certificate-errors",
         "--ignore-ssl-errors",
         "--incognito",
-        "--ignore-ssl-errors-ignore-untrusted",
-        "--use-fake-ui-for-media-stream",  # Auto-grant camera/microphone permissions
-        "--autoplay-policy=no-user-gesture-required",  # Allow autoplay
         WEB_URL
     ])
 
