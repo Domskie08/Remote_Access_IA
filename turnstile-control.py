@@ -291,9 +291,6 @@ def start_program():
 
     # Open Chromium in kiosk mode with auto-permissions
     print("🌐 Launching Chromium kiosk with auto-permissions...")
-    env = os.environ.copy()
-    env['DISPLAY'] = ':0'  # Ensure display is set
-    
     subprocess.Popen([
         "/usr/bin/chromium",
         "--kiosk",
@@ -301,10 +298,8 @@ def start_program():
         "--disable-infobars",
         "--incognito",
         "--ignore-certificate-errors",
-        # Camera/Media permissions - CRITICAL for auto-grant
+        # Auto-grant camera and microphone permissions
         "--use-fake-ui-for-media-stream",
-        "--use-fake-device-for-media-stream",  # Add this
-        "--auto-accept-camera-and-microphone-capture",  # Add this
         # Enable WebHID API
         "--enable-features=WebHID",
         # Disable permission prompts
@@ -317,9 +312,8 @@ def start_program():
         "--disable-dev-shm-usage",
         # Allow insecure localhost for self-signed certs
         "--allow-insecure-localhost",
-        "--unsafely-treat-insecure-origin-as-secure=" + WEB_URL,  # Add this
         WEB_URL
-    ], env=env)  # Add env parameter
+    ])
 
     # Start SSE listener
     running = True
