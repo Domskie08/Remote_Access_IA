@@ -289,10 +289,8 @@ def start_program():
     if not wait_for_scanner():
         print("⚠️ Continuing without scanner detection...")
 
-    # Set environment variables for display
-    env = os.environ.copy()
-    env['DISPLAY'] = ':0'  # Ensure display is set
-    
+    # Open Chromium in kiosk mode with auto-permissions
+    print("🌐 Launching Chromium kiosk with auto-permissions...")
     subprocess.Popen([
         "/usr/bin/chromium",
         "--kiosk",
@@ -300,10 +298,8 @@ def start_program():
         "--disable-infobars",
         "--incognito",
         "--ignore-certificate-errors",
-        # Camera/Media permissions - CRITICAL for auto-grant
+        # Auto-grant camera and microphone permissions
         "--use-fake-ui-for-media-stream",
-        "--use-fake-device-for-media-stream",  # Provides fake camera for testing
-        "--auto-accept-camera-and-microphone-capture",  # Auto-accepts permission prompts
         # Enable WebHID API
         "--enable-features=WebHID",
         # Disable permission prompts
@@ -316,9 +312,8 @@ def start_program():
         "--disable-dev-shm-usage",
         # Allow insecure localhost for self-signed certs
         "--allow-insecure-localhost",
-        "--unsafely-treat-insecure-origin-as-secure=" + WEB_URL,  # Treat HTTPS as secure
         WEB_URL
-    ], env=env)
+    ])
 
     # Start SSE listener
     running = True
